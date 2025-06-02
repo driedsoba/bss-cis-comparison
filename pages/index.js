@@ -444,6 +444,49 @@ export default function Home() {
     }
   };
 
+  // Compute insights once `results` is available
+  let compliancePercent = 0;
+  let testedControls = [];
+  let numPassed = 0,
+    numFailed = 0,
+    numSkipped = 0;
+  let reasonCounts = {};
+  let failByCategory = {};
+  let totalTested = 0,
+    mismatchCount = 0,
+    remarkCount = 0;
+
+  if (results) {
+    testedControls = results.filter((r) => r.In_CIS_Scan === 'Yes');
+    totalTested = testedControls.length;
+    numPassed = testedControls.filter((r) => r.Compliance_Status === 'Compliant').length;
+    numFailed = testedControls.filter((r) => r.Compliance_Status === 'Non-Compliant').length;
+    numSkipped = testedControls.filter((r) => r.Compliance_Status === 'Not Tested').length;
+    compliancePercent = totalTested > 0 ? Math.round((numPassed / totalTested) * 100) : 0;
+
+    // Reasons for non-compliance
+    reasonCounts = {};
+    testedControls.forEach((r) => {
+      if (r.Compliance_Status === 'Non-Compliant') {
+        const reason = r.Non_Compliance_Reason || 'Other';
+        reasonCounts[reason] = (reasonCounts[reason] || 0) + 1;
+      }
+    });
+
+    // Failures by category (BSS_Category)
+    failByCategory = {};
+    results.forEach((r) => {
+      if (r.Compliance_Status === 'Non-Compliant') {
+        const cat = r.BSS_Category || 'Unknown';
+        failByCategory[cat] = (failByCategory[cat] || 0) + 1;
+      }
+    });
+
+    // Title mismatches / remarks
+    mismatchCount = results.filter((r) => r.Title_Mismatch === 'Yes').length;
+    remarkCount = results.filter((r) => r.Has_Remark === 'Yes').length;
+  }
+
   return (
     <div style={styles.container}>
       <h1 style={styles.h1}>BSS-CIS Comparison Tool</h1>
@@ -480,27 +523,106 @@ export default function Home() {
 
       {results && (
         <div style={styles.results}>
-          <h2>Results Summary</h2>
-          <div style={styles.stats}>
-            <div style={styles.statBox}>Total Controls: {results.length}</div>
-            <div style={styles.statBox}>
-              Failed: {results.filter((r) => r.CIS_Status === 'Failed').length}
+          {/* Overall Compliance % */}
+          <div style={{ margin: '20px 0', textAlign: 'center' }}>
+            <h2>Overall Compliance</h2>
+            <div
+              style={{
+                fontSize: '2rem',
+                fontWeight: 'bold',
+                color:
+                  compliancePercent >= 90
+                    ? 'green'
+                    : compliancePercent >= 70
+                    ? 'orange'
+                    : 'red'
+              }}
+            >
+              {compliancePercent}%
             </div>
-            <div style={styles.statBox}>
-              Passed: {results.filter((r) => r.CIS_Status === 'Passed').length}
-            </div>
-            <div style={styles.statBox}>
-              With Remarks: {results.filter((r) => r.Change_Description_Remarks?.trim()).length}
-            </div>
-            <div style={styles.statBox}>
-              With Exceptions: {results.filter((r) => r.Synapxe_Exceptions?.trim()).length}
+            <div style={{ fontSize: '0.9rem', color: '#555' }}>
+              ({numPassed} passed, {numFailed} failed, {numSkipped} skipped out of{' '}
+              {totalTested} tested)
             </div>
           </div>
 
+          {/* Badge for Title Mismatch & Remarks */}
+          <div
+            style={{
+              margin: '20px 0',
+              display: 'flex',
+              gap: '12px',
+              justifyContent: 'center'
+            }}
+          >
+            <div
+              style={{
+                background: '#eef',
+                padding: '6px 10px',
+                borderRadius: '4px',
+                fontSize: '0.9rem'
+              }}
+            >
+              Title Mismatches: {mismatchCount} (
+              {totalTested ? Math.round((mismatchCount / totalTested) * 100) : 0}%)
+            </div>
+            <div
+              style={{
+                background: '#efe',
+                padding: '6px 10px',
+                borderRadius: '4px',
+                fontSize: '0.9rem'
+              }}
+            >
+              Controls with Remarks: {remarkCount} (
+              {totalTested ? Math.round((remarkCount / totalTested) * 100) : 0}%)
+            </div>
+          </div>
+
+          {/* Reasons for Non-Compliance */}
+          <div style={{ margin: '20px auto', maxWidth: '400px' }}>
+            <h3 style={{ fontSize: '1.1rem', marginBottom: '8px', textAlign: 'center' }}>
+              Reasons for Non-Compliance
+            </h3>
+            {Object.entries(reasonCounts).map(([reason, count]) => {
+              const widthPercent = totalTested > 0 ? Math.round((count / totalTested) * 100) : 0;
+              return (
+                <div key={reason} style={{ marginBottom: '8px' }}>
+                  <div style={{ fontSize: '0.85rem', marginBottom: '2px' }}>
+                    {reason} ({count})
+                  </div>
+                  <div
+                    style={{
+                      background: '#fcb',
+                      width: `${widthPercent}%`,
+                      height: '8px',
+                      border: '1px solid #faa',
+                      borderRadius: '4px'
+                    }}
+                  />
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Failures by BSS Category */}
+          <div style={{ margin: '20px 0' }}>
+            <h3 style={{ fontSize: '1.1rem' }}>Non-Compliant by BSS Category</h3>
+            <ul style={{ fontSize: '0.9rem', paddingLeft: '20px' }}>
+              {Object.entries(failByCategory).map(([cat, cnt]) => (
+                <li key={cat}>
+                  {cat}: {cnt}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Download Button */}
           <button onClick={() => generateExcelReport(results)} style={styles.button}>
             Download Excel Report
           </button>
 
+          {/* Table of Results (first 50 rows) */}
           <div style={styles.tableContainer}>
             <table style={styles.table}>
               <thead>
