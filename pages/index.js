@@ -87,12 +87,19 @@ export default function Home() {
       
       if (bssRow) {
         const titleCol = Object.keys(bssRow).find(key => key.includes('Setting Title'));
-        const remarksCol = Object.keys(bssRow).find(key => key.toLowerCase().includes('remark'));
+        const appCol = Object.keys(bssRow).find(key => key.includes('Setting Applicability'));
+        const cisRecCol = Object.keys(bssRow).find(key => key.includes('CIS Recommended Value'));
         
         result.BSS_Title = bssRow[titleCol] || '';
         result.BSS_Category = bssRow.Category || '';
-        result.BSS_Remarks = bssRow[remarksCol] || '';
-        result.Has_Remarks = result.BSS_Remarks ? 'Yes' : 'No';
+        result.Setting_Applicability = bssRow[appCol] || '';
+        result.CIS_Recommended_Value = bssRow[cisRecCol] || '';
+        result.Synapxe_Value = bssRow['Synapxe Value'] || '';
+        result.Synapxe_Exceptions = bssRow['Synapxe Exceptions'] || '';
+        result.Change_Description_Remarks = bssRow['Change Description / Remarks'] || '';
+        
+        // Check if BSS has its own ID column
+        result.BSS_ID = bssRow['BSS ID'] || bssRow['BSS #'] || checkId;
       }
       
       if (cisRow) {
@@ -129,8 +136,28 @@ export default function Home() {
   const generateExcelReport = (data) => {
     const wb = XLSX.utils.book_new();
     
-    // Full comparison sheet
-    const ws = XLSX.utils.json_to_sheet(data);
+    // Full comparison sheet with all columns
+    const fullData = data.map(row => ({
+      'Check ID': row.Check_ID,
+      'BSS ID': row.BSS_ID || row.Check_ID,
+      'In BSS': row.In_BSS,
+      'In CIS Scan': row.In_CIS_Scan,
+      'Compliance Status': row.Compliance_Status,
+      'CIS Status': row.CIS_Status || '',
+      'BSS Category': row.BSS_Category || '',
+      'Setting Applicability': row.Setting_Applicability || '',
+      'BSS Title': row.BSS_Title || '',
+      'CIS Title': row.CIS_Title || '',
+      'CIS Level': row.CIS_Level || '',
+      'CIS Recommended Value': row.CIS_Recommended_Value || '',
+      'Synapxe Value': row.Synapxe_Value || '',
+      'Synapxe Exceptions': row.Synapxe_Exceptions || '',
+      'Change Description / Remarks': row.Change_Description_Remarks || '',
+      'Failed Instances': row.Failed_Instances || '',
+      'Passed Instances': row.Passed_Instances || ''
+    }));
+    
+    const ws = XLSX.utils.json_to_sheet(fullData);
     XLSX.utils.book_append_sheet(wb, ws, "Full Comparison");
     
     // Summary sheet
@@ -139,7 +166,8 @@ export default function Home() {
       { Metric: 'Controls in BSS Only', Count: data.filter(r => r.In_BSS === 'Yes' && r.In_CIS_Scan === 'No').length },
       { Metric: 'Controls in CIS Only', Count: data.filter(r => r.In_BSS === 'No' && r.In_CIS_Scan === 'Yes').length },
       { Metric: 'Controls in Both', Count: data.filter(r => r.In_BSS === 'Yes' && r.In_CIS_Scan === 'Yes').length },
-      { Metric: 'Controls with Remarks', Count: data.filter(r => r.Has_Remarks === 'Yes').length },
+      { Metric: 'Controls with Remarks', Count: data.filter(r => r.Change_Description_Remarks && r.Change_Description_Remarks.trim()).length },
+      { Metric: 'Controls with Exceptions', Count: data.filter(r => r.Synapxe_Exceptions && r.Synapxe_Exceptions.trim()).length },
       { Metric: 'Failed Controls', Count: data.filter(r => r.CIS_Status === 'Failed').length },
       { Metric: 'Passed Controls', Count: data.filter(r => r.CIS_Status === 'Passed').length },
       { Metric: 'Skipped Controls', Count: data.filter(r => r.CIS_Status === 'Skipped').length }
@@ -148,16 +176,46 @@ export default function Home() {
     XLSX.utils.book_append_sheet(wb, summaryWs, "Summary");
     
     // Controls with remarks
-    const remarksData = data.filter(r => r.Has_Remarks === 'Yes');
+    const remarksData = data.filter(r => r.Change_Description_Remarks && r.Change_Description_Remarks.trim());
     if (remarksData.length > 0) {
-      const remarksWs = XLSX.utils.json_to_sheet(remarksData);
+      const remarksWs = XLSX.utils.json_to_sheet(remarksData.map(row => ({
+        'Check ID': row.Check_ID,
+        'BSS Category': row.BSS_Category,
+        'BSS Title': row.BSS_Title,
+        'Synapxe Value': row.Synapxe_Value,
+        'Change Description / Remarks': row.Change_Description_Remarks,
+        'Compliance Status': row.Compliance_Status
+      })));
       XLSX.utils.book_append_sheet(wb, remarksWs, "Controls with Remarks");
+    }
+    
+    // Controls with exceptions
+    const exceptionsData = data.filter(r => r.Synapxe_Exceptions && r.Synapxe_Exceptions.trim());
+    if (exceptionsData.length > 0) {
+      const exceptionsWs = XLSX.utils.json_to_sheet(exceptionsData.map(row => ({
+        'Check ID': row.Check_ID,
+        'BSS Category': row.BSS_Category,
+        'BSS Title': row.BSS_Title,
+        'Synapxe Value': row.Synapxe_Value,
+        'Synapxe Exceptions': row.Synapxe_Exceptions,
+        'Compliance Status': row.Compliance_Status
+      })));
+      XLSX.utils.book_append_sheet(wb, exceptionsWs, "Controls with Exceptions");
     }
     
     // Non-compliant controls
     const failedData = data.filter(r => r.CIS_Status === 'Failed');
     if (failedData.length > 0) {
-      const failedWs = XLSX.utils.json_to_sheet(failedData);
+      const failedWs = XLSX.utils.json_to_sheet(failedData.map(row => ({
+        'Check ID': row.Check_ID,
+        'BSS Category': row.BSS_Category,
+        'BSS Title': row.BSS_Title,
+        'CIS Title': row.CIS_Title,
+        'CIS Recommended Value': row.CIS_Recommended_Value,
+        'Synapxe Value': row.Synapxe_Value,
+        'Failed Instances': row.Failed_Instances,
+        'Change Description / Remarks': row.Change_Description_Remarks
+      })));
       XLSX.utils.book_append_sheet(wb, failedWs, "Non-Compliant Controls");
     }
     
@@ -309,7 +367,8 @@ export default function Home() {
             <div style={styles.statBox}>Total Controls: {results.length}</div>
             <div style={styles.statBox}>Failed: {results.filter(r => r.CIS_Status === 'Failed').length}</div>
             <div style={styles.statBox}>Passed: {results.filter(r => r.CIS_Status === 'Passed').length}</div>
-            <div style={styles.statBox}>With Remarks: {results.filter(r => r.Has_Remarks === 'Yes').length}</div>
+            <div style={styles.statBox}>With Remarks: {results.filter(r => r.Change_Description_Remarks && r.Change_Description_Remarks.trim()).length}</div>
+            <div style={styles.statBox}>With Exceptions: {results.filter(r => r.Synapxe_Exceptions && r.Synapxe_Exceptions.trim()).length}</div>
           </div>
           
           <button onClick={() => generateExcelReport(results)} style={styles.button}>
@@ -321,10 +380,12 @@ export default function Home() {
               <thead>
                 <tr>
                   <th style={styles.th}>Check ID</th>
-                  <th style={styles.th}>In BSS</th>
-                  <th style={styles.th}>In CIS</th>
+                  <th style={styles.th}>Category</th>
                   <th style={styles.th}>Compliance Status</th>
-                  <th style={styles.th}>Has Remarks</th>
+                  <th style={styles.th}>CIS Rec Value</th>
+                  <th style={styles.th}>Synapxe Value</th>
+                  <th style={styles.th}>Exceptions</th>
+                  <th style={styles.th}>Remarks</th>
                 </tr>
               </thead>
               <tbody>
@@ -337,10 +398,12 @@ export default function Home() {
                     }
                   >
                     <td style={styles.td}>{row.Check_ID}</td>
-                    <td style={styles.td}>{row.In_BSS}</td>
-                    <td style={styles.td}>{row.In_CIS_Scan}</td>
+                    <td style={styles.td}>{row.BSS_Category || '-'}</td>
                     <td style={styles.td}>{row.Compliance_Status}</td>
-                    <td style={styles.td}>{row.Has_Remarks}</td>
+                    <td style={styles.td}>{row.CIS_Recommended_Value || '-'}</td>
+                    <td style={styles.td}>{row.Synapxe_Value || '-'}</td>
+                    <td style={styles.td}>{row.Synapxe_Exceptions || '-'}</td>
+                    <td style={styles.td}>{row.Change_Description_Remarks || '-'}</td>
                   </tr>
                 ))}
               </tbody>
