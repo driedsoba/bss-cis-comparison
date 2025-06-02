@@ -173,9 +173,15 @@ export default function Home() {
       }
       result.Title_Mismatch = titleMismatch ? 'Yes' : 'No';
 
-      // 5) Check for any nonempty remark
-      const hasRemark =
-        bssRow && (result.Change_Description_Remarks || '').toString().trim() !== '';
+      // 5) Check for any nonempty remark, but treat "NIL" as no remark
+      let hasRemark = false;
+      if (bssRow) {
+        const rawRemark = (result.Change_Description_Remarks || '').toString().trim();
+        // If trimmed remark is empty or exactly "nil" (case-insensitive), treat as no remark
+        if (rawRemark !== '' && rawRemark.toLowerCase() !== 'nil') {
+          hasRemark = true;
+        }
+      }
       result.Has_Remark = hasRemark ? 'Yes' : 'No';
 
       // 6) Derive final Compliance_Status & Non_Compliance_Reason
@@ -271,7 +277,10 @@ export default function Home() {
       },
       {
         Metric: 'Controls with Remarks',
-        Count: data.filter((r) => r.Change_Description_Remarks?.trim()).length
+        Count: data.filter((r) => {
+          const rawRemark = (r.Change_Description_Remarks || '').toString().trim();
+          return rawRemark !== '' && rawRemark.toLowerCase() !== 'nil';
+        }).length
       },
       {
         Metric: 'Controls with Exceptions',
@@ -285,7 +294,10 @@ export default function Home() {
     XLSX.utils.book_append_sheet(wb, summaryWs, 'Summary');
 
     // 3) Controls with Remarks
-    const remarksData = data.filter((r) => r.Change_Description_Remarks?.trim());
+    const remarksData = data.filter((r) => {
+      const rawRemark = (r.Change_Description_Remarks || '').toString().trim();
+      return rawRemark !== '' && rawRemark.toLowerCase() !== 'nil';
+    });
     if (remarksData.length > 0) {
       const remarksWs = XLSX.utils.json_to_sheet(
         remarksData.map((row) => ({
@@ -405,16 +417,11 @@ export default function Home() {
     results: {
       marginTop: '20px'
     },
-    stats: {
-      display: 'flex',
-      gap: '20px',
-      margin: '15px 0',
-      fontSize: '14px'
-    },
     statBox: {
       background: '#e3f2fd',
       padding: '10px',
-      borderRadius: '4px'
+      borderRadius: '4px',
+      fontSize: '0.9rem'
     },
     tableContainer: {
       marginTop: '20px',
