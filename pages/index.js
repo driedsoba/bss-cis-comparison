@@ -24,10 +24,8 @@ export default function Home() {
     if (!sheetName) throw new Error("Settings sheet not found");
 
     const worksheet = workbook.Sheets[sheetName];
-    // Convert to a 2D array so we can locate "CIS #"
     const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
 
-    // Find the row index where "CIS #" appears in any cell
     let headerRowIdx = jsonData.findIndex((row) =>
       row.some((cell) => cell && cell.toString().includes('CIS #'))
     );
@@ -36,7 +34,7 @@ export default function Home() {
     const headers = jsonData[headerRowIdx];
     const data_rows = jsonData
       .slice(headerRowIdx + 1)
-      .filter((row) => row[headers.indexOf('CIS #')]) // only keep rows where "CIS #" is nonempty
+      .filter((row) => row[headers.indexOf('CIS #')]) // only keep rows with a CIS #
       .map((row) => {
         const obj = {};
         headers.forEach((header, idx) => {
@@ -53,13 +51,11 @@ export default function Home() {
       Papa.parse(file, {
         complete: (result) => {
           let data = result.data;
-          // Locate the first row that starts with "check_id"
           let headerIdx = data.findIndex((row) =>
             row[0] === 'check_id' || (row.length > 1 && row[0].includes('check_id'))
           );
           if (headerIdx > 0) data = data.slice(headerIdx);
 
-          // Re-parse with header: true
           const parsed = Papa.parse(Papa.unparse(data), {
             header: true,
             skipEmptyLines: true
@@ -86,7 +82,7 @@ export default function Home() {
       const bssRow = bssMap.get(checkId);
       const cisRow = cisMap.get(checkId);
 
-      // Initialize our result object
+      // Initialize the result object
       const result = {
         Check_ID: checkId,
         In_BSS: bssRow ? 'Yes' : 'No',
@@ -94,7 +90,7 @@ export default function Home() {
         Non_Compliance_Reason: ''
       };
 
-      // 1) Pull in all BSS fields (and strip "(L#)" from title)
+      // 1) Pull in BSS fields (strip "(L#)" from title)
       if (bssRow) {
         const titleCol = Object.keys(bssRow).find((key) => key.includes('Setting Title'));
         const appCol = Object.keys(bssRow).find((key) => key.includes('Setting Applicability'));
@@ -103,9 +99,7 @@ export default function Home() {
         );
 
         const rawBssTitle = bssRow[titleCol] || '';
-        const cleanBssTitle = stripLPrefix(rawBssTitle);
-
-        result.BSS_Title = cleanBssTitle;
+        result.BSS_Title = stripLPrefix(rawBssTitle);
         result.BSS_Category = bssRow.Category || '';
         result.Setting_Applicability = bssRow[appCol] || '';
         result.CIS_Recommended_Value = bssRow[cisRecCol] || '';
@@ -114,7 +108,6 @@ export default function Home() {
         result.Change_Description_Remarks = bssRow['Change Description / Remarks'] || '';
         result.BSS_ID = bssRow['BSS ID'] || bssRow['BSS #'] || checkId;
       } else {
-        // If no BSS row, fill defaults
         result.BSS_Title = '';
         result.BSS_Category = '';
         result.Setting_Applicability = '';
@@ -125,12 +118,10 @@ export default function Home() {
         result.BSS_ID = checkId;
       }
 
-      // 2) Pull CIS fields (and strip "(L#)" from CIS title)
+      // 2) Pull in CIS fields (strip "(L#)" from CIS title)
       if (cisRow) {
         const rawCisTitle = cisRow.title || '';
-        const cleanCisTitle = stripLPrefix(rawCisTitle);
-
-        result.CIS_Title = cleanCisTitle;
+        result.CIS_Title = stripLPrefix(rawCisTitle);
         result.CIS_Level = cisRow.level || '';
         result.Failed_Instances = cisRow.failed_instances || '';
         result.Passed_Instances = cisRow.passed_instances || '';
@@ -162,7 +153,7 @@ export default function Home() {
         result.CIS_Status = '';
       }
 
-      // 4) Check for title mismatch (using cleaned titles)
+      // 4) Check for title mismatch (comparing stripped titles)
       let titleMismatch = false;
       if (bssRow && cisRow) {
         const bTitle = (result.BSS_Title || '').toString().trim();
@@ -173,18 +164,18 @@ export default function Home() {
       }
       result.Title_Mismatch = titleMismatch ? 'Yes' : 'No';
 
-      // 5) Check for any nonempty remark, but treat "NIL" as no remark
+      // 5) Check for meaningful remark (treat "NIL" or "None" as no remark)
       let hasRemark = false;
       if (bssRow) {
         const rawRemark = (result.Change_Description_Remarks || '').toString().trim();
-        // If trimmed remark is empty or exactly "nil" (case-insensitive), treat as no remark
-        if (rawRemark !== '' && rawRemark.toLowerCase() !== 'nil') {
+        const lowerRemark = rawRemark.toLowerCase();
+        if (lowerRemark !== '' && lowerRemark !== 'nil' && lowerRemark !== 'none') {
           hasRemark = true;
         }
       }
       result.Has_Remark = hasRemark ? 'Yes' : 'No';
 
-      // 6) Derive final Compliance_Status & Non_Compliance_Reason
+      // 6) Determine final Compliance_Status & Non_Compliance_Reason
       if (bssRow && cisRow) {
         if (result.CIS_Status === 'Failed') {
           result.Compliance_Status = 'Non-Compliant';
@@ -234,7 +225,7 @@ export default function Home() {
   const generateExcelReport = (data) => {
     const wb = XLSX.utils.book_new();
 
-    // 1) Full Comparison sheet (with trimmed titles)
+    // 1) Full Comparison sheet
     const fullData = data.map((row) => ({
       'Check ID': row.Check_ID,
       'BSS ID': row.BSS_ID,
@@ -279,12 +270,16 @@ export default function Home() {
         Metric: 'Controls with Remarks',
         Count: data.filter((r) => {
           const rawRemark = (r.Change_Description_Remarks || '').toString().trim();
-          return rawRemark !== '' && rawRemark.toLowerCase() !== 'nil';
+          const lowerRemark = rawRemark.toLowerCase();
+          return lowerRemark !== '' && lowerRemark !== 'nil' && lowerRemark !== 'none';
         }).length
       },
       {
         Metric: 'Controls with Exceptions',
-        Count: data.filter((r) => r.Synapxe_Exceptions?.trim()).length
+        Count: data.filter((r) => {
+          const rawExc = (r.Synapxe_Exceptions || '').toString().trim().toLowerCase();
+          return rawExc !== '' && rawExc !== 'nil' && rawExc !== 'none';
+        }).length
       },
       { Metric: 'Failed Controls', Count: data.filter((r) => r.CIS_Status === 'Failed').length },
       { Metric: 'Passed Controls', Count: data.filter((r) => r.CIS_Status === 'Passed').length },
@@ -296,7 +291,8 @@ export default function Home() {
     // 3) Controls with Remarks
     const remarksData = data.filter((r) => {
       const rawRemark = (r.Change_Description_Remarks || '').toString().trim();
-      return rawRemark !== '' && rawRemark.toLowerCase() !== 'nil';
+      const lowerRemark = rawRemark.toLowerCase();
+      return lowerRemark !== '' && lowerRemark !== 'nil' && lowerRemark !== 'none';
     });
     if (remarksData.length > 0) {
       const remarksWs = XLSX.utils.json_to_sheet(
@@ -314,7 +310,10 @@ export default function Home() {
     }
 
     // 4) Controls with Exceptions
-    const exceptionsData = data.filter((r) => r.Synapxe_Exceptions?.trim());
+    const exceptionsData = data.filter((r) => {
+      const rawExc = (r.Synapxe_Exceptions || '').toString().trim().toLowerCase();
+      return rawExc !== '' && rawExc !== 'nil' && rawExc !== 'none';
+    });
     if (exceptionsData.length > 0) {
       const exceptionsWs = XLSX.utils.json_to_sheet(
         exceptionsData.map((row) => ({
@@ -349,7 +348,6 @@ export default function Home() {
       XLSX.utils.book_append_sheet(wb, nonCompliantWs, 'Non-Compliant Details');
     }
 
-    // Finally, write the workbook to a file named with today's date
     XLSX.writeFile(wb, `BSS_CIS_Comparison_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
