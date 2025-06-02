@@ -1,4 +1,3 @@
-// pages/index.js
 import { useState } from 'react';
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
@@ -185,67 +184,163 @@ export default function Home() {
     }
   };
 
+  const styles = {
+    container: {
+      maxWidth: '1200px',
+      margin: '0 auto',
+      padding: '20px',
+      fontFamily: 'Arial, sans-serif'
+    },
+    h1: {
+      color: '#333',
+      textAlign: 'center'
+    },
+    fileInputs: {
+      background: '#f5f5f5',
+      padding: '20px',
+      borderRadius: '8px',
+      marginBottom: '20px'
+    },
+    inputGroup: {
+      marginBottom: '15px'
+    },
+    label: {
+      display: 'block',
+      marginBottom: '5px',
+      fontWeight: 'bold'
+    },
+    fileInput: {
+      width: '100%',
+      padding: '5px'
+    },
+    button: {
+      background: '#4CAF50',
+      color: 'white',
+      padding: '10px 20px',
+      border: 'none',
+      borderRadius: '4px',
+      cursor: 'pointer',
+      fontSize: '16px'
+    },
+    buttonDisabled: {
+      background: '#cccccc',
+      cursor: 'not-allowed'
+    },
+    results: {
+      marginTop: '20px'
+    },
+    stats: {
+      display: 'flex',
+      gap: '20px',
+      margin: '15px 0',
+      fontSize: '14px'
+    },
+    statBox: {
+      background: '#e3f2fd',
+      padding: '10px',
+      borderRadius: '4px'
+    },
+    tableContainer: {
+      marginTop: '20px',
+      overflowX: 'auto'
+    },
+    table: {
+      width: '100%',
+      borderCollapse: 'collapse'
+    },
+    th: {
+      border: '1px solid #ddd',
+      padding: '8px',
+      textAlign: 'left',
+      background: '#f2f2f2',
+      fontWeight: 'bold'
+    },
+    td: {
+      border: '1px solid #ddd',
+      padding: '8px',
+      textAlign: 'left'
+    },
+    trEven: {
+      background: '#f9f9f9'
+    },
+    trFailed: {
+      background: '#ffebee'
+    }
+  };
+
   return (
-    <div className="container">
-      <h1>BSS-CIS Comparison Tool</h1>
+    <div style={styles.container}>
+      <h1 style={styles.h1}>BSS-CIS Comparison Tool</h1>
       
-      <div className="file-inputs">
-        <div className="input-group">
-          <label>BSS Excel File:</label>
+      <div style={styles.fileInputs}>
+        <div style={styles.inputGroup}>
+          <label style={styles.label}>BSS Excel File:</label>
           <input 
             type="file" 
             accept=".xlsx,.xls" 
             onChange={(e) => setBssFile(e.target.files[0])}
+            style={styles.fileInput}
           />
         </div>
         
-        <div className="input-group">
-          <label>CIS CSV File:</label>
+        <div style={styles.inputGroup}>
+          <label style={styles.label}>CIS CSV File:</label>
           <input 
             type="file" 
             accept=".csv" 
             onChange={(e) => setCisFile(e.target.files[0])}
+            style={styles.fileInput}
           />
         </div>
         
-        <button onClick={handleCompare} disabled={loading}>
+        <button 
+          onClick={handleCompare} 
+          disabled={loading}
+          style={loading ? {...styles.button, ...styles.buttonDisabled} : styles.button}
+        >
           {loading ? 'Processing...' : 'Compare Files'}
         </button>
       </div>
       
       {results && (
-        <div className="results">
+        <div style={styles.results}>
           <h2>Results Summary</h2>
-          <div className="stats">
-            <div>Total Controls: {results.length}</div>
-            <div>Failed: {results.filter(r => r.CIS_Status === 'Failed').length}</div>
-            <div>Passed: {results.filter(r => r.CIS_Status === 'Passed').length}</div>
-            <div>With Remarks: {results.filter(r => r.Has_Remarks === 'Yes').length}</div>
+          <div style={styles.stats}>
+            <div style={styles.statBox}>Total Controls: {results.length}</div>
+            <div style={styles.statBox}>Failed: {results.filter(r => r.CIS_Status === 'Failed').length}</div>
+            <div style={styles.statBox}>Passed: {results.filter(r => r.CIS_Status === 'Passed').length}</div>
+            <div style={styles.statBox}>With Remarks: {results.filter(r => r.Has_Remarks === 'Yes').length}</div>
           </div>
           
-          <button onClick={() => generateExcelReport(results)}>
+          <button onClick={() => generateExcelReport(results)} style={styles.button}>
             Download Excel Report
           </button>
           
-          <div className="table-container">
-            <table>
+          <div style={styles.tableContainer}>
+            <table style={styles.table}>
               <thead>
                 <tr>
-                  <th>Check ID</th>
-                  <th>In BSS</th>
-                  <th>In CIS</th>
-                  <th>Compliance Status</th>
-                  <th>Has Remarks</th>
+                  <th style={styles.th}>Check ID</th>
+                  <th style={styles.th}>In BSS</th>
+                  <th style={styles.th}>In CIS</th>
+                  <th style={styles.th}>Compliance Status</th>
+                  <th style={styles.th}>Has Remarks</th>
                 </tr>
               </thead>
               <tbody>
                 {results.slice(0, 50).map((row, idx) => (
-                  <tr key={idx} className={row.CIS_Status === 'Failed' ? 'failed' : ''}>
-                    <td>{row.Check_ID}</td>
-                    <td>{row.In_BSS}</td>
-                    <td>{row.In_CIS_Scan}</td>
-                    <td>{row.Compliance_Status}</td>
-                    <td>{row.Has_Remarks}</td>
+                  <tr 
+                    key={idx} 
+                    style={
+                      row.CIS_Status === 'Failed' ? styles.trFailed : 
+                      idx % 2 === 0 ? styles.trEven : {}
+                    }
+                  >
+                    <td style={styles.td}>{row.Check_ID}</td>
+                    <td style={styles.td}>{row.In_BSS}</td>
+                    <td style={styles.td}>{row.In_CIS_Scan}</td>
+                    <td style={styles.td}>{row.Compliance_Status}</td>
+                    <td style={styles.td}>{row.Has_Remarks}</td>
                   </tr>
                 ))}
               </tbody>
@@ -254,130 +349,6 @@ export default function Home() {
           </div>
         </div>
       )}
-      
-      <style jsx>{`
-        .container {
-          max-width: 1200px;
-          margin: 0 auto;
-          padding: 20px;
-          font-family: Arial, sans-serif;
-        }
-        
-        h1 {
-          color: #333;
-          text-align: center;
-        }
-        
-        .file-inputs {
-          background: #f5f5f5;
-          padding: 20px;
-          border-radius: 8px;
-          margin-bottom: 20px;
-        }
-        
-        .input-group {
-          margin-bottom: 15px;
-        }
-        
-        label {
-          display: block;
-          margin-bottom: 5px;
-          font-weight: bold;
-        }
-        
-        input[type="file"] {
-          width: 100%;
-          padding: 5px;
-        }
-        
-        button {
-          background: #4CAF50;
-          color: white;
-          padding: 10px 20px;
-          border: none;
-          border-radius: 4px;
-          cursor: pointer;
-          font-size: 16px;
-        }
-        
-        button:hover {
-          background: #45a049;
-        }
-        
-        button:disabled {
-          background: #cccccc;
-          cursor: not-allowed;
-        }
-        
-        .results {
-          margin-top: 20px;
-        }
-        
-        .stats {
-          display: flex;
-          gap: 20px;
-          margin: 15px 0;
-          font-size: 14px;
-        }
-        
-        .stats div {
-          background: #e3f2fd;
-          padding: 10px;
-          border-radius: 4px;
-        }
-        
-        .table-container {
-          margin-top: 20px;
-          overflow-x: auto;
-        }
-        
-        table {
-          width: 100%;
-          border-collapse: collapse;
-        }
-        
-        th, td {
-          border: 1px solid #ddd;
-          padding: 8px;
-          text-align: left;
-        }
-        
-        th {
-          background: #f2f2f2;
-          font-weight: bold;
-        }
-        
-        tr:nth-child(even) {
-          background: #f9f9f9;
-        }
-        
-        tr.failed {
-          background: #ffebee;
-        }
-        
-        tr:hover {
-          background: #e3f2fd;
-        }
-      `}</style>
     </div>
   );
-}
-
-// package.json
-{
-  "name": "bss-cis-comparison",
-  "version": "1.0.0",
-  "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start"
-  },
-  "dependencies": {
-    "next": "latest",
-    "react": "latest",
-    "react-dom": "latest",
-    "xlsx": "^0.18.5",
-    "papaparse": "^5.4.1"
-  }
 }
