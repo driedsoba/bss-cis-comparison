@@ -13,11 +13,35 @@ export default function Home() {
     return raw.replace(/^\(L\d+\)\s*/, '').trim();
   };
 
+  // Simple string similarity using Dice coefficient (no external deps)
+  const calculateSimilarity = (str1, str2) => {
+    if (!str1 || !str2) return 0;
+    
+    const normalize = (s) => s.toLowerCase().replace(/[^\w\s]/g, '').trim();
+    const s1 = normalize(str1);
+    const s2 = normalize(str2);
+    
+    if (s1 === s2) return 1.0;
+    if (s1.length < 2 || s2.length < 2) return 0;
+    
+    const bigrams1 = new Set();
+    const bigrams2 = new Set();
+    
+    for (let i = 0; i < s1.length - 1; i++) {
+      bigrams1.add(s1.substr(i, 2));
+    }
+    for (let i = 0; i < s2.length - 1; i++) {
+      bigrams2.add(s2.substr(i, 2));
+    }
+    
+    const intersection = new Set([...bigrams1].filter(x => bigrams2.has(x)));
+    return (2 * intersection.size) / (bigrams1.size + bigrams2.size);
+  };
+
   const readBSSFile = async (file) => {
     const data = await file.arrayBuffer();
     const workbook = XLSX.read(data);
 
-    // Find the sheet whose name contains "settings" or "server"
     const sheetName = Object.keys(workbook.Sheets).find((name) =>
       name.toLowerCase().includes('settings') || name.toLowerCase().includes('server')
     );
@@ -34,7 +58,7 @@ export default function Home() {
     const headers = jsonData[headerRowIdx];
     const data_rows = jsonData
       .slice(headerRowIdx + 1)
-      .filter((row) => row[headers.indexOf('CIS #')]) // only keep rows with a CIS #
+      .filter((row) => row[headers.indexOf('CIS #')])
       .map((row) => {
         const obj = {};
         headers.forEach((header, idx) => {
@@ -69,6 +93,7 @@ export default function Home() {
 
   const compareData = (bssData, cisData) => {
     const results = [];
+    const SIMILARITY_THRESHOLD = 0.7; // Adjust this threshold as needed
 
     // Build fast lookup maps by ID
     const bssMap = new Map(bssData.map((row) => [row['CIS #']?.toString(), row]));
@@ -82,7 +107,6 @@ export default function Home() {
       const bssRow = bssMap.get(checkId);
       const cisRow = cisMap.get(checkId);
 
-      // Initialize the result object
       const result = {
         Check_ID: checkId,
         In_BSS: bssRow ? 'Yes' : 'No',
@@ -153,15 +177,16 @@ export default function Home() {
         result.CIS_Status = '';
       }
 
-      // 4) Check for title mismatch (comparing stripped titles)
+      // 4) Enhanced title similarity check
       let titleMismatch = false;
-      if (bssRow && cisRow) {
-        const bTitle = (result.BSS_Title || '').toString().trim();
-        const cTitle = (result.CIS_Title || '').toString().trim();
-        if (bTitle !== cTitle) {
-          titleMismatch = true;
-        }
+      let similarityScore = 1.0;
+      
+      if (bssRow && cisRow && result.BSS_Title && result.CIS_Title) {
+        similarityScore = calculateSimilarity(result.BSS_Title, result.CIS_Title);
+        titleMismatch = similarityScore < SIMILARITY_THRESHOLD;
       }
+      
+      result.Title_Similarity = similarityScore;
       result.Title_Mismatch = titleMismatch ? 'Yes' : 'No';
 
       // 5) Check for meaningful remark (treat "NIL" or "None" as no remark)
@@ -192,7 +217,6 @@ export default function Home() {
             result.Non_Compliance_Reason = '';
           }
         } else {
-          // CIS_Status === 'Skipped'
           result.Compliance_Status = 'Not Tested';
           result.Non_Compliance_Reason = '';
         }
@@ -207,7 +231,6 @@ export default function Home() {
           result.Compliance_Status = 'Compliant';
           result.Non_Compliance_Reason = 'No BSS Policy';
         } else {
-          // CIS_Status === 'Skipped'
           result.Compliance_Status = 'Not Tested';
           result.Non_Compliance_Reason = 'No BSS Policy';
         }
@@ -217,6 +240,21 @@ export default function Home() {
       }
 
       results.push(result);
+    });
+
+    // Secondary pass: detect duplicate/similar titles across different IDs
+    const titleMap = new Map();
+    results.forEach((row) => {
+      if (row.BSS_Title) {
+        const key = row.BSS_Title.toLowerCase().trim();
+        if (!titleMap.has(key)) titleMap.set(key, []);
+        titleMap.get(key).push(row.Check_ID);
+      }
+    });
+
+    results.forEach((row) => {
+      const key = row.BSS_Title.toLowerCase().trim();
+      row.Duplicate_Title = titleMap.get(key)?.length > 1 ? 'Yes' : 'No';
     });
 
     return results.sort((a, b) => a.Check_ID.localeCompare(b.Check_ID));
@@ -234,7 +272,9 @@ export default function Home() {
       'BSS Category': row.BSS_Category,
       'BSS Title': row.BSS_Title,
       'CIS Title': row.CIS_Title,
+      'Title Similarity': row.Title_Similarity?.toFixed(2) || '',
       'Title Mismatch': row.Title_Mismatch,
+      'Duplicate Title': row.Duplicate_Title,
       'Change Description / Remarks': row.Change_Description_Remarks,
       'Has Remark': row.Has_Remark,
       'CIS Status': row.CIS_Status,
@@ -267,6 +307,14 @@ export default function Home() {
         Count: data.filter((r) => r.In_BSS === 'Yes' && r.In_CIS_Scan === 'Yes').length
       },
       {
+        Metric: 'Title Mismatches',
+        Count: data.filter((r) => r.Title_Mismatch === 'Yes').length
+      },
+      {
+        Metric: 'Duplicate Titles',
+        Count: data.filter((r) => r.Duplicate_Title === 'Yes').length
+      },
+      {
         Metric: 'Controls with Remarks',
         Count: data.filter((r) => {
           const rawRemark = (r.Change_Description_Remarks || '').toString().trim();
@@ -288,7 +336,22 @@ export default function Home() {
     const summaryWs = XLSX.utils.json_to_sheet(summary);
     XLSX.utils.book_append_sheet(wb, summaryWs, 'Summary');
 
-    // 3) Controls with Remarks
+    // 3) Title Mismatches sheet
+    const mismatchData = data.filter((r) => r.Title_Mismatch === 'Yes');
+    if (mismatchData.length > 0) {
+      const mismatchWs = XLSX.utils.json_to_sheet(
+        mismatchData.map((row) => ({
+          'Check ID': row.Check_ID,
+          'BSS Title': row.BSS_Title,
+          'CIS Title': row.CIS_Title,
+          'Similarity Score': row.Title_Similarity?.toFixed(2) || '',
+          'Compliance Status': row.Compliance_Status
+        }))
+      );
+      XLSX.utils.book_append_sheet(wb, mismatchWs, 'Title Mismatches');
+    }
+
+    // 4) Controls with Remarks
     const remarksData = data.filter((r) => {
       const rawRemark = (r.Change_Description_Remarks || '').toString().trim();
       const lowerRemark = rawRemark.toLowerCase();
@@ -309,7 +372,7 @@ export default function Home() {
       XLSX.utils.book_append_sheet(wb, remarksWs, 'Controls with Remarks');
     }
 
-    // 4) Controls with Exceptions
+    // 5) Controls with Exceptions
     const exceptionsData = data.filter((r) => {
       const rawExc = (r.Synapxe_Exceptions || '').toString().trim().toLowerCase();
       return rawExc !== '' && rawExc !== 'nil' && rawExc !== 'none';
@@ -329,7 +392,7 @@ export default function Home() {
       XLSX.utils.book_append_sheet(wb, exceptionsWs, 'Controls with Exceptions');
     }
 
-    // 5) Non-Compliant Details
+    // 6) Non-Compliant Details
     const nonCompliantData = data.filter((r) => r.Compliance_Status === 'Non-Compliant');
     if (nonCompliantData.length > 0) {
       const nonCompliantWs = XLSX.utils.json_to_sheet(
@@ -338,6 +401,7 @@ export default function Home() {
           'BSS Category': row.BSS_Category,
           'BSS Title': row.BSS_Title,
           'CIS Title': row.CIS_Title,
+          'Title Similarity': row.Title_Similarity?.toFixed(2) || '',
           'Title Mismatch': row.Title_Mismatch,
           'Has Remark': row.Has_Remark,
           'CIS Status': row.CIS_Status,
@@ -459,7 +523,8 @@ export default function Home() {
   let failByCategory = {};
   let totalTested = 0,
     mismatchCount = 0,
-    remarkCount = 0;
+    remarkCount = 0,
+    duplicateCount = 0;
 
   if (results) {
     testedControls = results.filter((r) => r.In_CIS_Scan === 'Yes');
@@ -487,14 +552,15 @@ export default function Home() {
       }
     });
 
-    // Title mismatches / remarks
+    // Title mismatches / remarks / duplicates
     mismatchCount = results.filter((r) => r.Title_Mismatch === 'Yes').length;
     remarkCount = results.filter((r) => r.Has_Remark === 'Yes').length;
+    duplicateCount = results.filter((r) => r.Duplicate_Title === 'Yes').length;
   }
 
   return (
     <div style={styles.container}>
-      <h1 style={styles.h1}>BSS-CIS Comparison Tool</h1>
+      <h1 style={styles.h1}>BSS-CIS Comparison Tool with Fuzzy Matching</h1>
 
       <div style={styles.fileInputs}>
         <div style={styles.inputGroup}>
@@ -551,13 +617,14 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Badge for Title Mismatch & Remarks */}
+          {/* Enhanced badges for Title issues */}
           <div
             style={{
               margin: '20px 0',
               display: 'flex',
               gap: '12px',
-              justifyContent: 'center'
+              justifyContent: 'center',
+              flexWrap: 'wrap'
             }}
           >
             <div
@@ -570,6 +637,16 @@ export default function Home() {
             >
               Title Mismatches: {mismatchCount} (
               {totalTested ? Math.round((mismatchCount / totalTested) * 100) : 0}%)
+            </div>
+            <div
+              style={{
+                background: '#fef',
+                padding: '6px 10px',
+                borderRadius: '4px',
+                fontSize: '0.9rem'
+              }}
+            >
+              Duplicate Titles: {duplicateCount}
             </div>
             <div
               style={{
@@ -627,7 +704,7 @@ export default function Home() {
             Download Excel Report
           </button>
 
-          {/* Table of Results (first 50 rows) */}
+          {/* Enhanced Table with Similarity */}
           <div style={styles.tableContainer}>
             <table style={styles.table}>
               <thead>
@@ -635,6 +712,7 @@ export default function Home() {
                   <th style={styles.th}>Check ID</th>
                   <th style={styles.th}>Category</th>
                   <th style={styles.th}>Compliance Status</th>
+                  <th style={styles.th}>Title Similarity</th>
                   <th style={styles.th}>CIS Rec Value</th>
                   <th style={styles.th}>Synapxe Value</th>
                   <th style={styles.th}>Exceptions</th>
@@ -656,6 +734,14 @@ export default function Home() {
                     <td style={styles.td}>{row.Check_ID}</td>
                     <td style={styles.td}>{row.BSS_Category || '-'}</td>
                     <td style={styles.td}>{row.Compliance_Status}</td>
+                    <td style={styles.td}>
+                      <span style={{
+                        color: row.Title_Similarity < 0.7 ? 'red' : 
+                               row.Title_Similarity < 0.85 ? 'orange' : 'green'
+                      }}>
+                        {row.Title_Similarity ? row.Title_Similarity.toFixed(2) : '-'}
+                      </span>
+                    </td>
                     <td style={styles.td}>{row.CIS_Recommended_Value || '-'}</td>
                     <td style={styles.td}>{row.Synapxe_Value || '-'}</td>
                     <td style={styles.td}>{row.Synapxe_Exceptions || '-'}</td>
