@@ -11,26 +11,25 @@ export default function Home() {
   const readBSSFile = async (file) => {
     const data = await file.arrayBuffer();
     const workbook = XLSX.read(data);
-    
+
     // Find settings sheet
-    const sheetName = Object.keys(workbook.Sheets).find(name => 
+    const sheetName = Object.keys(workbook.Sheets).find(name =>
       name.toLowerCase().includes('settings') || name.toLowerCase().includes('server')
     );
-    
     if (!sheetName) throw new Error("Settings sheet not found");
-    
+
     const worksheet = workbook.Sheets[sheetName];
     const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-    
+
     // Find header row
-    let headerRowIdx = jsonData.findIndex(row => 
+    let headerRowIdx = jsonData.findIndex(row =>
       row.some(cell => cell && cell.toString().includes('CIS #'))
     );
-    
     if (headerRowIdx === -1) throw new Error("Header row not found");
-    
+
     const headers = jsonData[headerRowIdx];
-    const data_rows = jsonData.slice(headerRowIdx + 1)
+    const data_rows = jsonData
+      .slice(headerRowIdx + 1)
       .filter(row => row[headers.indexOf('CIS #')])
       .map(row => {
         const obj = {};
@@ -39,7 +38,7 @@ export default function Home() {
         });
         return obj;
       });
-    
+
     return data_rows;
   };
 
@@ -47,21 +46,17 @@ export default function Home() {
     return new Promise((resolve, reject) => {
       Papa.parse(file, {
         complete: (result) => {
-          // Skip metadata rows if present
           let data = result.data;
-          let headerIdx = data.findIndex(row => 
-            row[0] === 'check_id' || (row.length > 1 && row[0].includes('check_id'))
+          let headerIdx = data.findIndex(row =>
+            row[0] === 'check_id' ||
+            (row.length > 1 && row[0].includes('check_id'))
           );
-          
-          if (headerIdx > 0) {
-            data = data.slice(headerIdx);
-          }
-          
+          if (headerIdx > 0) data = data.slice(headerIdx);
+
           const parsed = Papa.parse(Papa.unparse(data), {
             header: true,
             skipEmptyLines: true
           });
-          
           resolve(parsed.data);
         },
         error: reject
@@ -71,25 +66,33 @@ export default function Home() {
 
   const compareData = (bssData, cisData) => {
     const results = [];
+
+    // Build lookup maps for faster access
+    const bssMap = new Map(bssData.map(row => [row['CIS #']?.toString(), row]));
+    const cisMap = new Map(cisData.map(row => [row.check_id?.toString(), row]));
+
     const bssIds = new Set(bssData.map(row => row['CIS #']?.toString()));
     const cisIds = new Set(cisData.map(row => row.check_id?.toString()));
     const allIds = new Set([...bssIds, ...cisIds]);
-    
+
     allIds.forEach(checkId => {
-      const bssRow = bssData.find(row => row['CIS #']?.toString() === checkId);
-      const cisRow = cisData.find(row => row.check_id?.toString() === checkId);
-      
+      const bssRow = bssMap.get(checkId);
+      const cisRow = cisMap.get(checkId);
+
+      // Initialize result object
       const result = {
         Check_ID: checkId,
         In_BSS: bssRow ? 'Yes' : 'No',
-        In_CIS_Scan: cisRow ? 'Yes' : 'No'
+        In_CIS_Scan: cisRow ? 'Yes' : 'No',
+        Non_Compliance_Reason: ''
       };
-      
+
+      // 1) Pull BSS fields
       if (bssRow) {
         const titleCol = Object.keys(bssRow).find(key => key.includes('Setting Title'));
         const appCol = Object.keys(bssRow).find(key => key.includes('Setting Applicability'));
         const cisRecCol = Object.keys(bssRow).find(key => key.includes('CIS Recommended Value'));
-        
+
         result.BSS_Title = bssRow[titleCol] || '';
         result.BSS_Category = bssRow.Category || '';
         result.Setting_Applicability = bssRow[appCol] || '';
@@ -97,86 +100,152 @@ export default function Home() {
         result.Synapxe_Value = bssRow['Synapxe Value'] || '';
         result.Synapxe_Exceptions = bssRow['Synapxe Exceptions'] || '';
         result.Change_Description_Remarks = bssRow['Change Description / Remarks'] || '';
-        
-        // Check if BSS has its own ID column
         result.BSS_ID = bssRow['BSS ID'] || bssRow['BSS #'] || checkId;
+      } else {
+        result.BSS_Title = '';
+        result.BSS_Category = '';
+        result.Setting_Applicability = '';
+        result.CIS_Recommended_Value = '';
+        result.Synapxe_Value = '';
+        result.Synapxe_Exceptions = '';
+        result.Change_Description_Remarks = '';
+        result.BSS_ID = checkId;
       }
-      
+
+      // 2) Pull CIS fields
       if (cisRow) {
         result.CIS_Title = cisRow.title || '';
         result.CIS_Level = cisRow.level || '';
-        
-        if (cisRow.failed_instances && cisRow.failed_instances !== 'None') {
-          result.CIS_Status = 'Failed';
-          result.Compliance_Status = 'Non-Compliant';
-        } else if (cisRow.passed_instances && cisRow.passed_instances !== 'None') {
-          result.CIS_Status = 'Passed';
-          result.Compliance_Status = 'Compliant';
-        } else {
-          result.CIS_Status = 'Skipped';
-          result.Compliance_Status = 'Not Tested';
-        }
-        
         result.Failed_Instances = cisRow.failed_instances || '';
         result.Passed_Instances = cisRow.passed_instances || '';
+      } else {
+        result.CIS_Title = '';
+        result.CIS_Level = '';
+        result.Failed_Instances = '';
+        result.Passed_Instances = '';
       }
-      
-      if (result.In_BSS === 'Yes' && result.In_CIS_Scan === 'No') {
+
+      // 3) Determine CIS_Status
+      if (cisRow) {
+        if (cisRow.failed_instances && cisRow.failed_instances !== 'None' && cisRow.failed_instances.trim() !== '') {
+          result.CIS_Status = 'Failed';
+        } else if (cisRow.passed_instances && cisRow.passed_instances !== 'None' && cisRow.passed_instances.trim() !== '') {
+          result.CIS_Status = 'Passed';
+        } else {
+          result.CIS_Status = 'Skipped';
+        }
+      } else {
+        result.CIS_Status = '';
+      }
+
+      // 4) Title mismatch check (only if both exist)
+      let titleMismatch = false;
+      if (bssRow && cisRow) {
+        const bssTitle = (result.BSS_Title || '').toString().trim();
+        const cisTitle = (result.CIS_Title || '').toString().trim();
+        if (bssTitle !== cisTitle) {
+          titleMismatch = true;
+        }
+      }
+      result.Title_Mismatch = titleMismatch ? 'Yes' : 'No';
+
+      // 5) Remark check
+      const hasRemark = bssRow && ( (result.Change_Description_Remarks || '').toString().trim() !== '' );
+      result.Has_Remark = hasRemark ? 'Yes' : 'No';
+
+      // 6) Determine Compliance_Status & Non_Compliance_Reason
+      if (bssRow && cisRow) {
+        if (result.CIS_Status === 'Failed') {
+          result.Compliance_Status = 'Non-Compliant';
+          result.Non_Compliance_Reason = 'Scan Failed';
+        } else if (result.CIS_Status === 'Passed') {
+          if (titleMismatch) {
+            result.Compliance_Status = 'Non-Compliant';
+            result.Non_Compliance_Reason = 'Title Mismatch';
+          } else if (hasRemark) {
+            result.Compliance_Status = 'Non-Compliant';
+            result.Non_Compliance_Reason = 'Has Remark';
+          } else {
+            result.Compliance_Status = 'Compliant';
+            result.Non_Compliance_Reason = '';
+          }
+        } else {
+          // CIS_Status === 'Skipped'
+          result.Compliance_Status = 'Not Tested';
+          result.Non_Compliance_Reason = '';
+        }
+      } else if (bssRow && !cisRow) {
         result.Compliance_Status = 'Not in CIS Scan';
-      } else if (result.In_BSS === 'No' && result.In_CIS_Scan === 'Yes') {
-        result.Compliance_Status = 'Not in BSS Policy';
+        result.Non_Compliance_Reason = '';
+      } else if (!bssRow && cisRow) {
+        if (result.CIS_Status === 'Failed') {
+          result.Compliance_Status = 'Non-Compliant';
+          result.Non_Compliance_Reason = 'Scan Failed (No BSS Policy)';
+        } else if (result.CIS_Status === 'Passed') {
+          result.Compliance_Status = 'Compliant';
+          result.Non_Compliance_Reason = 'No BSS Policy';
+        } else {
+          // CIS_Status === 'Skipped'
+          result.Compliance_Status = 'Not Tested';
+          result.Non_Compliance_Reason = 'No BSS Policy';
+        }
+      } else {
+        result.Compliance_Status = '';
+        result.Non_Compliance_Reason = '';
       }
-      
+
       results.push(result);
     });
-    
+
     return results.sort((a, b) => a.Check_ID.localeCompare(b.Check_ID));
   };
 
   const generateExcelReport = (data) => {
     const wb = XLSX.utils.book_new();
-    
-    // Full comparison sheet with all columns
+
+    // Full comparison sheet
     const fullData = data.map(row => ({
       'Check ID': row.Check_ID,
-      'BSS ID': row.BSS_ID || row.Check_ID,
+      'BSS ID': row.BSS_ID,
       'In BSS': row.In_BSS,
       'In CIS Scan': row.In_CIS_Scan,
+      'BSS Category': row.BSS_Category,
+      'BSS Title': row.BSS_Title,
+      'CIS Title': row.CIS_Title,
+      'Title Mismatch': row.Title_Mismatch,
+      'Change Description / Remarks': row.Change_Description_Remarks,
+      'Has Remark': row.Has_Remark,
+      'CIS Status': row.CIS_Status,
+      'CIS Level': row.CIS_Level,
+      'CIS Recommended Value': row.CIS_Recommended_Value,
+      'Synapxe Value': row.Synapxe_Value,
+      'Synapxe Exceptions': row.Synapxe_Exceptions,
+      'Failed Instances': row.Failed_Instances,
+      'Passed Instances': row.Passed_Instances,
       'Compliance Status': row.Compliance_Status,
-      'CIS Status': row.CIS_Status || '',
-      'BSS Category': row.BSS_Category || '',
-      'Setting Applicability': row.Setting_Applicability || '',
-      'BSS Title': row.BSS_Title || '',
-      'CIS Title': row.CIS_Title || '',
-      'CIS Level': row.CIS_Level || '',
-      'CIS Recommended Value': row.CIS_Recommended_Value || '',
-      'Synapxe Value': row.Synapxe_Value || '',
-      'Synapxe Exceptions': row.Synapxe_Exceptions || '',
-      'Change Description / Remarks': row.Change_Description_Remarks || '',
-      'Failed Instances': row.Failed_Instances || '',
-      'Passed Instances': row.Passed_Instances || ''
+      'Non_Compliance_Reason': row.Non_Compliance_Reason,
+      'Setting Applicability': row.Setting_Applicability
     }));
-    
     const ws = XLSX.utils.json_to_sheet(fullData);
     XLSX.utils.book_append_sheet(wb, ws, "Full Comparison");
-    
+
     // Summary sheet
     const summary = [
       { Metric: 'Total Unique Controls', Count: data.length },
       { Metric: 'Controls in BSS Only', Count: data.filter(r => r.In_BSS === 'Yes' && r.In_CIS_Scan === 'No').length },
       { Metric: 'Controls in CIS Only', Count: data.filter(r => r.In_BSS === 'No' && r.In_CIS_Scan === 'Yes').length },
       { Metric: 'Controls in Both', Count: data.filter(r => r.In_BSS === 'Yes' && r.In_CIS_Scan === 'Yes').length },
-      { Metric: 'Controls with Remarks', Count: data.filter(r => r.Change_Description_Remarks && r.Change_Description_Remarks.trim()).length },
-      { Metric: 'Controls with Exceptions', Count: data.filter(r => r.Synapxe_Exceptions && r.Synapxe_Exceptions.trim()).length },
+      { Metric: 'Controls with Remarks', Count: data.filter(r => r.Change_Description_Remarks?.trim()).length },
+      { Metric: 'Controls with Exceptions', Count: data.filter(r => r.Synapxe_Exceptions?.trim()).length },
       { Metric: 'Failed Controls', Count: data.filter(r => r.CIS_Status === 'Failed').length },
       { Metric: 'Passed Controls', Count: data.filter(r => r.CIS_Status === 'Passed').length },
       { Metric: 'Skipped Controls', Count: data.filter(r => r.CIS_Status === 'Skipped').length }
     ];
     const summaryWs = XLSX.utils.json_to_sheet(summary);
     XLSX.utils.book_append_sheet(wb, summaryWs, "Summary");
-    
-    // Controls with remarks
-    const remarksData = data.filter(r => r.Change_Description_Remarks && r.Change_Description_Remarks.trim());
+
+    // Controls with Remarks sheet
+    const remarksData = data.filter(r => r.Change_Description_Remarks?.trim());
     if (remarksData.length > 0) {
       const remarksWs = XLSX.utils.json_to_sheet(remarksData.map(row => ({
         'Check ID': row.Check_ID,
@@ -184,13 +253,14 @@ export default function Home() {
         'BSS Title': row.BSS_Title,
         'Synapxe Value': row.Synapxe_Value,
         'Change Description / Remarks': row.Change_Description_Remarks,
-        'Compliance Status': row.Compliance_Status
+        'Compliance Status': row.Compliance_Status,
+        'Non_Compliance_Reason': row.Non_Compliance_Reason
       })));
       XLSX.utils.book_append_sheet(wb, remarksWs, "Controls with Remarks");
     }
-    
-    // Controls with exceptions
-    const exceptionsData = data.filter(r => r.Synapxe_Exceptions && r.Synapxe_Exceptions.trim());
+
+    // Controls with Exceptions sheet
+    const exceptionsData = data.filter(r => r.Synapxe_Exceptions?.trim());
     if (exceptionsData.length > 0) {
       const exceptionsWs = XLSX.utils.json_to_sheet(exceptionsData.map(row => ({
         'Check ID': row.Check_ID,
@@ -198,27 +268,29 @@ export default function Home() {
         'BSS Title': row.BSS_Title,
         'Synapxe Value': row.Synapxe_Value,
         'Synapxe Exceptions': row.Synapxe_Exceptions,
-        'Compliance Status': row.Compliance_Status
+        'Compliance Status': row.Compliance_Status,
+        'Non_Compliance_Reason': row.Non_Compliance_Reason
       })));
       XLSX.utils.book_append_sheet(wb, exceptionsWs, "Controls with Exceptions");
     }
-    
-    // Non-compliant controls
-    const failedData = data.filter(r => r.CIS_Status === 'Failed');
-    if (failedData.length > 0) {
-      const failedWs = XLSX.utils.json_to_sheet(failedData.map(row => ({
+
+    // Non-Compliant Details sheet
+    const nonCompliantData = data.filter(r => r.Compliance_Status === 'Non-Compliant');
+    if (nonCompliantData.length > 0) {
+      const nonCompliantWs = XLSX.utils.json_to_sheet(nonCompliantData.map(row => ({
         'Check ID': row.Check_ID,
         'BSS Category': row.BSS_Category,
         'BSS Title': row.BSS_Title,
         'CIS Title': row.CIS_Title,
-        'CIS Recommended Value': row.CIS_Recommended_Value,
-        'Synapxe Value': row.Synapxe_Value,
-        'Failed Instances': row.Failed_Instances,
+        'Title Mismatch': row.Title_Mismatch,
+        'Has Remark': row.Has_Remark,
+        'CIS Status': row.CIS_Status,
+        'Non_Compliance_Reason': row.Non_Compliance_Reason,
         'Change Description / Remarks': row.Change_Description_Remarks
       })));
-      XLSX.utils.book_append_sheet(wb, failedWs, "Non-Compliant Controls");
+      XLSX.utils.book_append_sheet(wb, nonCompliantWs, "Non-Compliant Details");
     }
-    
+
     // Generate file
     XLSX.writeFile(wb, `BSS_CIS_Comparison_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
@@ -228,7 +300,7 @@ export default function Home() {
       alert('Please select both BSS and CIS files');
       return;
     }
-    
+
     setLoading(true);
     try {
       const bssData = await readBSSFile(bssFile);
@@ -329,37 +401,37 @@ export default function Home() {
   return (
     <div style={styles.container}>
       <h1 style={styles.h1}>BSS-CIS Comparison Tool</h1>
-      
+
       <div style={styles.fileInputs}>
         <div style={styles.inputGroup}>
           <label style={styles.label}>BSS Excel File:</label>
-          <input 
-            type="file" 
-            accept=".xlsx,.xls" 
+          <input
+            type="file"
+            accept=".xlsx,.xls"
             onChange={(e) => setBssFile(e.target.files[0])}
             style={styles.fileInput}
           />
         </div>
-        
+
         <div style={styles.inputGroup}>
           <label style={styles.label}>CIS CSV File:</label>
-          <input 
-            type="file" 
-            accept=".csv" 
+          <input
+            type="file"
+            accept=".csv"
             onChange={(e) => setCisFile(e.target.files[0])}
             style={styles.fileInput}
           />
         </div>
-        
-        <button 
-          onClick={handleCompare} 
+
+        <button
+          onClick={handleCompare}
           disabled={loading}
-          style={loading ? {...styles.button, ...styles.buttonDisabled} : styles.button}
+          style={loading ? { ...styles.button, ...styles.buttonDisabled } : styles.button}
         >
           {loading ? 'Processing...' : 'Compare Files'}
         </button>
       </div>
-      
+
       {results && (
         <div style={styles.results}>
           <h2>Results Summary</h2>
@@ -367,14 +439,14 @@ export default function Home() {
             <div style={styles.statBox}>Total Controls: {results.length}</div>
             <div style={styles.statBox}>Failed: {results.filter(r => r.CIS_Status === 'Failed').length}</div>
             <div style={styles.statBox}>Passed: {results.filter(r => r.CIS_Status === 'Passed').length}</div>
-            <div style={styles.statBox}>With Remarks: {results.filter(r => r.Change_Description_Remarks && r.Change_Description_Remarks.trim()).length}</div>
-            <div style={styles.statBox}>With Exceptions: {results.filter(r => r.Synapxe_Exceptions && r.Synapxe_Exceptions.trim()).length}</div>
+            <div style={styles.statBox}>With Remarks: {results.filter(r => r.Change_Description_Remarks?.trim()).length}</div>
+            <div style={styles.statBox}>With Exceptions: {results.filter(r => r.Synapxe_Exceptions?.trim()).length}</div>
           </div>
-          
+
           <button onClick={() => generateExcelReport(results)} style={styles.button}>
             Download Excel Report
           </button>
-          
+
           <div style={styles.tableContainer}>
             <table style={styles.table}>
               <thead>
@@ -390,11 +462,14 @@ export default function Home() {
               </thead>
               <tbody>
                 {results.slice(0, 50).map((row, idx) => (
-                  <tr 
-                    key={idx} 
+                  <tr
+                    key={idx}
                     style={
-                      row.CIS_Status === 'Failed' ? styles.trFailed : 
-                      idx % 2 === 0 ? styles.trEven : {}
+                      row.CIS_Status === 'Failed'
+                        ? styles.trFailed
+                        : idx % 2 === 0
+                        ? styles.trEven
+                        : {}
                     }
                   >
                     <td style={styles.td}>{row.Check_ID}</td>
