@@ -8,30 +8,36 @@ export default function Home() {
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(false);
 
+  // Utility: strip any leading "(L<number>) " from a string
+  const stripLPrefix = (raw) => {
+    return raw.replace(/^\(L\d+\)\s*/, '').trim();
+  };
+
   const readBSSFile = async (file) => {
     const data = await file.arrayBuffer();
     const workbook = XLSX.read(data);
 
-    // Find settings sheet
-    const sheetName = Object.keys(workbook.Sheets).find(name =>
+    // Find the sheet whose name contains "settings" or "server"
+    const sheetName = Object.keys(workbook.Sheets).find((name) =>
       name.toLowerCase().includes('settings') || name.toLowerCase().includes('server')
     );
     if (!sheetName) throw new Error("Settings sheet not found");
 
     const worksheet = workbook.Sheets[sheetName];
+    // Convert to a 2D array so we can locate "CIS #"
     const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
 
-    // Find header row
-    let headerRowIdx = jsonData.findIndex(row =>
-      row.some(cell => cell && cell.toString().includes('CIS #'))
+    // Find the row index where "CIS #" appears in any cell
+    let headerRowIdx = jsonData.findIndex((row) =>
+      row.some((cell) => cell && cell.toString().includes('CIS #'))
     );
     if (headerRowIdx === -1) throw new Error("Header row not found");
 
     const headers = jsonData[headerRowIdx];
     const data_rows = jsonData
       .slice(headerRowIdx + 1)
-      .filter(row => row[headers.indexOf('CIS #')])
-      .map(row => {
+      .filter((row) => row[headers.indexOf('CIS #')]) // only keep rows where "CIS #" is nonempty
+      .map((row) => {
         const obj = {};
         headers.forEach((header, idx) => {
           obj[header.toString().trim()] = row[idx];
@@ -47,12 +53,13 @@ export default function Home() {
       Papa.parse(file, {
         complete: (result) => {
           let data = result.data;
-          let headerIdx = data.findIndex(row =>
-            row[0] === 'check_id' ||
-            (row.length > 1 && row[0].includes('check_id'))
+          // Locate the first row that starts with "check_id"
+          let headerIdx = data.findIndex((row) =>
+            row[0] === 'check_id' || (row.length > 1 && row[0].includes('check_id'))
           );
           if (headerIdx > 0) data = data.slice(headerIdx);
 
+          // Re-parse with header: true
           const parsed = Papa.parse(Papa.unparse(data), {
             header: true,
             skipEmptyLines: true
@@ -67,19 +74,19 @@ export default function Home() {
   const compareData = (bssData, cisData) => {
     const results = [];
 
-    // Build lookup maps for faster access
-    const bssMap = new Map(bssData.map(row => [row['CIS #']?.toString(), row]));
-    const cisMap = new Map(cisData.map(row => [row.check_id?.toString(), row]));
+    // Build fast lookup maps by ID
+    const bssMap = new Map(bssData.map((row) => [row['CIS #']?.toString(), row]));
+    const cisMap = new Map(cisData.map((row) => [row.check_id?.toString(), row]));
 
-    const bssIds = new Set(bssData.map(row => row['CIS #']?.toString()));
-    const cisIds = new Set(cisData.map(row => row.check_id?.toString()));
+    const bssIds = new Set(bssData.map((row) => row['CIS #']?.toString()));
+    const cisIds = new Set(cisData.map((row) => row.check_id?.toString()));
     const allIds = new Set([...bssIds, ...cisIds]);
 
-    allIds.forEach(checkId => {
+    allIds.forEach((checkId) => {
       const bssRow = bssMap.get(checkId);
       const cisRow = cisMap.get(checkId);
 
-      // Initialize result object
+      // Initialize our result object
       const result = {
         Check_ID: checkId,
         In_BSS: bssRow ? 'Yes' : 'No',
@@ -87,13 +94,18 @@ export default function Home() {
         Non_Compliance_Reason: ''
       };
 
-      // 1) Pull BSS fields
+      // 1) Pull in all BSS fields (and strip "(L#)" from title)
       if (bssRow) {
-        const titleCol = Object.keys(bssRow).find(key => key.includes('Setting Title'));
-        const appCol = Object.keys(bssRow).find(key => key.includes('Setting Applicability'));
-        const cisRecCol = Object.keys(bssRow).find(key => key.includes('CIS Recommended Value'));
+        const titleCol = Object.keys(bssRow).find((key) => key.includes('Setting Title'));
+        const appCol = Object.keys(bssRow).find((key) => key.includes('Setting Applicability'));
+        const cisRecCol = Object.keys(bssRow).find((key) =>
+          key.includes('CIS Recommended Value')
+        );
 
-        result.BSS_Title = bssRow[titleCol] || '';
+        const rawBssTitle = bssRow[titleCol] || '';
+        const cleanBssTitle = stripLPrefix(rawBssTitle);
+
+        result.BSS_Title = cleanBssTitle;
         result.BSS_Category = bssRow.Category || '';
         result.Setting_Applicability = bssRow[appCol] || '';
         result.CIS_Recommended_Value = bssRow[cisRecCol] || '';
@@ -102,6 +114,7 @@ export default function Home() {
         result.Change_Description_Remarks = bssRow['Change Description / Remarks'] || '';
         result.BSS_ID = bssRow['BSS ID'] || bssRow['BSS #'] || checkId;
       } else {
+        // If no BSS row, fill defaults
         result.BSS_Title = '';
         result.BSS_Category = '';
         result.Setting_Applicability = '';
@@ -112,9 +125,12 @@ export default function Home() {
         result.BSS_ID = checkId;
       }
 
-      // 2) Pull CIS fields
+      // 2) Pull CIS fields (and strip "(L#)" from CIS title)
       if (cisRow) {
-        result.CIS_Title = cisRow.title || '';
+        const rawCisTitle = cisRow.title || '';
+        const cleanCisTitle = stripLPrefix(rawCisTitle);
+
+        result.CIS_Title = cleanCisTitle;
         result.CIS_Level = cisRow.level || '';
         result.Failed_Instances = cisRow.failed_instances || '';
         result.Passed_Instances = cisRow.passed_instances || '';
@@ -125,11 +141,19 @@ export default function Home() {
         result.Passed_Instances = '';
       }
 
-      // 3) Determine CIS_Status
+      // 3) Determine CIS_Status (Failed / Passed / Skipped)
       if (cisRow) {
-        if (cisRow.failed_instances && cisRow.failed_instances !== 'None' && cisRow.failed_instances.trim() !== '') {
+        if (
+          cisRow.failed_instances &&
+          cisRow.failed_instances !== 'None' &&
+          cisRow.failed_instances.trim() !== ''
+        ) {
           result.CIS_Status = 'Failed';
-        } else if (cisRow.passed_instances && cisRow.passed_instances !== 'None' && cisRow.passed_instances.trim() !== '') {
+        } else if (
+          cisRow.passed_instances &&
+          cisRow.passed_instances !== 'None' &&
+          cisRow.passed_instances.trim() !== ''
+        ) {
           result.CIS_Status = 'Passed';
         } else {
           result.CIS_Status = 'Skipped';
@@ -138,22 +162,23 @@ export default function Home() {
         result.CIS_Status = '';
       }
 
-      // 4) Title mismatch check (only if both exist)
+      // 4) Check for title mismatch (using cleaned titles)
       let titleMismatch = false;
       if (bssRow && cisRow) {
-        const bssTitle = (result.BSS_Title || '').toString().trim();
-        const cisTitle = (result.CIS_Title || '').toString().trim();
-        if (bssTitle !== cisTitle) {
+        const bTitle = (result.BSS_Title || '').toString().trim();
+        const cTitle = (result.CIS_Title || '').toString().trim();
+        if (bTitle !== cTitle) {
           titleMismatch = true;
         }
       }
       result.Title_Mismatch = titleMismatch ? 'Yes' : 'No';
 
-      // 5) Remark check
-      const hasRemark = bssRow && ( (result.Change_Description_Remarks || '').toString().trim() !== '' );
+      // 5) Check for any nonempty remark
+      const hasRemark =
+        bssRow && (result.Change_Description_Remarks || '').toString().trim() !== '';
       result.Has_Remark = hasRemark ? 'Yes' : 'No';
 
-      // 6) Determine Compliance_Status & Non_Compliance_Reason
+      // 6) Derive final Compliance_Status & Non_Compliance_Reason
       if (bssRow && cisRow) {
         if (result.CIS_Status === 'Failed') {
           result.Compliance_Status = 'Non-Compliant';
@@ -203,8 +228,8 @@ export default function Home() {
   const generateExcelReport = (data) => {
     const wb = XLSX.utils.book_new();
 
-    // Full comparison sheet
-    const fullData = data.map(row => ({
+    // 1) Full Comparison sheet (with trimmed titles)
+    const fullData = data.map((row) => ({
       'Check ID': row.Check_ID,
       'BSS ID': row.BSS_ID,
       'In BSS': row.In_BSS,
@@ -227,71 +252,92 @@ export default function Home() {
       'Setting Applicability': row.Setting_Applicability
     }));
     const ws = XLSX.utils.json_to_sheet(fullData);
-    XLSX.utils.book_append_sheet(wb, ws, "Full Comparison");
+    XLSX.utils.book_append_sheet(wb, ws, 'Full Comparison');
 
-    // Summary sheet
+    // 2) Summary sheet
     const summary = [
       { Metric: 'Total Unique Controls', Count: data.length },
-      { Metric: 'Controls in BSS Only', Count: data.filter(r => r.In_BSS === 'Yes' && r.In_CIS_Scan === 'No').length },
-      { Metric: 'Controls in CIS Only', Count: data.filter(r => r.In_BSS === 'No' && r.In_CIS_Scan === 'Yes').length },
-      { Metric: 'Controls in Both', Count: data.filter(r => r.In_BSS === 'Yes' && r.In_CIS_Scan === 'Yes').length },
-      { Metric: 'Controls with Remarks', Count: data.filter(r => r.Change_Description_Remarks?.trim()).length },
-      { Metric: 'Controls with Exceptions', Count: data.filter(r => r.Synapxe_Exceptions?.trim()).length },
-      { Metric: 'Failed Controls', Count: data.filter(r => r.CIS_Status === 'Failed').length },
-      { Metric: 'Passed Controls', Count: data.filter(r => r.CIS_Status === 'Passed').length },
-      { Metric: 'Skipped Controls', Count: data.filter(r => r.CIS_Status === 'Skipped').length }
+      {
+        Metric: 'Controls in BSS Only',
+        Count: data.filter((r) => r.In_BSS === 'Yes' && r.In_CIS_Scan === 'No').length
+      },
+      {
+        Metric: 'Controls in CIS Only',
+        Count: data.filter((r) => r.In_BSS === 'No' && r.In_CIS_Scan === 'Yes').length
+      },
+      {
+        Metric: 'Controls in Both',
+        Count: data.filter((r) => r.In_BSS === 'Yes' && r.In_CIS_Scan === 'Yes').length
+      },
+      {
+        Metric: 'Controls with Remarks',
+        Count: data.filter((r) => r.Change_Description_Remarks?.trim()).length
+      },
+      {
+        Metric: 'Controls with Exceptions',
+        Count: data.filter((r) => r.Synapxe_Exceptions?.trim()).length
+      },
+      { Metric: 'Failed Controls', Count: data.filter((r) => r.CIS_Status === 'Failed').length },
+      { Metric: 'Passed Controls', Count: data.filter((r) => r.CIS_Status === 'Passed').length },
+      { Metric: 'Skipped Controls', Count: data.filter((r) => r.CIS_Status === 'Skipped').length }
     ];
     const summaryWs = XLSX.utils.json_to_sheet(summary);
-    XLSX.utils.book_append_sheet(wb, summaryWs, "Summary");
+    XLSX.utils.book_append_sheet(wb, summaryWs, 'Summary');
 
-    // Controls with Remarks sheet
-    const remarksData = data.filter(r => r.Change_Description_Remarks?.trim());
+    // 3) Controls with Remarks
+    const remarksData = data.filter((r) => r.Change_Description_Remarks?.trim());
     if (remarksData.length > 0) {
-      const remarksWs = XLSX.utils.json_to_sheet(remarksData.map(row => ({
-        'Check ID': row.Check_ID,
-        'BSS Category': row.BSS_Category,
-        'BSS Title': row.BSS_Title,
-        'Synapxe Value': row.Synapxe_Value,
-        'Change Description / Remarks': row.Change_Description_Remarks,
-        'Compliance Status': row.Compliance_Status,
-        'Non_Compliance_Reason': row.Non_Compliance_Reason
-      })));
-      XLSX.utils.book_append_sheet(wb, remarksWs, "Controls with Remarks");
+      const remarksWs = XLSX.utils.json_to_sheet(
+        remarksData.map((row) => ({
+          'Check ID': row.Check_ID,
+          'BSS Category': row.BSS_Category,
+          'BSS Title': row.BSS_Title,
+          'Synapxe Value': row.Synapxe_Value,
+          'Change Description / Remarks': row.Change_Description_Remarks,
+          'Compliance Status': row.Compliance_Status,
+          'Non_Compliance_Reason': row.Non_Compliance_Reason
+        }))
+      );
+      XLSX.utils.book_append_sheet(wb, remarksWs, 'Controls with Remarks');
     }
 
-    // Controls with Exceptions sheet
-    const exceptionsData = data.filter(r => r.Synapxe_Exceptions?.trim());
+    // 4) Controls with Exceptions
+    const exceptionsData = data.filter((r) => r.Synapxe_Exceptions?.trim());
     if (exceptionsData.length > 0) {
-      const exceptionsWs = XLSX.utils.json_to_sheet(exceptionsData.map(row => ({
-        'Check ID': row.Check_ID,
-        'BSS Category': row.BSS_Category,
-        'BSS Title': row.BSS_Title,
-        'Synapxe Value': row.Synapxe_Value,
-        'Synapxe Exceptions': row.Synapxe_Exceptions,
-        'Compliance Status': row.Compliance_Status,
-        'Non_Compliance_Reason': row.Non_Compliance_Reason
-      })));
-      XLSX.utils.book_append_sheet(wb, exceptionsWs, "Controls with Exceptions");
+      const exceptionsWs = XLSX.utils.json_to_sheet(
+        exceptionsData.map((row) => ({
+          'Check ID': row.Check_ID,
+          'BSS Category': row.BSS_Category,
+          'BSS Title': row.BSS_Title,
+          'Synapxe Value': row.Synapxe_Value,
+          'Synapxe Exceptions': row.Synapxe_Exceptions,
+          'Compliance Status': row.Compliance_Status,
+          'Non_Compliance_Reason': row.Non_Compliance_Reason
+        }))
+      );
+      XLSX.utils.book_append_sheet(wb, exceptionsWs, 'Controls with Exceptions');
     }
 
-    // Non-Compliant Details sheet
-    const nonCompliantData = data.filter(r => r.Compliance_Status === 'Non-Compliant');
+    // 5) Non-Compliant Details
+    const nonCompliantData = data.filter((r) => r.Compliance_Status === 'Non-Compliant');
     if (nonCompliantData.length > 0) {
-      const nonCompliantWs = XLSX.utils.json_to_sheet(nonCompliantData.map(row => ({
-        'Check ID': row.Check_ID,
-        'BSS Category': row.BSS_Category,
-        'BSS Title': row.BSS_Title,
-        'CIS Title': row.CIS_Title,
-        'Title Mismatch': row.Title_Mismatch,
-        'Has Remark': row.Has_Remark,
-        'CIS Status': row.CIS_Status,
-        'Non_Compliance_Reason': row.Non_Compliance_Reason,
-        'Change Description / Remarks': row.Change_Description_Remarks
-      })));
-      XLSX.utils.book_append_sheet(wb, nonCompliantWs, "Non-Compliant Details");
+      const nonCompliantWs = XLSX.utils.json_to_sheet(
+        nonCompliantData.map((row) => ({
+          'Check ID': row.Check_ID,
+          'BSS Category': row.BSS_Category,
+          'BSS Title': row.BSS_Title,
+          'CIS Title': row.CIS_Title,
+          'Title Mismatch': row.Title_Mismatch,
+          'Has Remark': row.Has_Remark,
+          'CIS Status': row.CIS_Status,
+          'Non_Compliance_Reason': row.Non_Compliance_Reason,
+          'Change Description / Remarks': row.Change_Description_Remarks
+        }))
+      );
+      XLSX.utils.book_append_sheet(wb, nonCompliantWs, 'Non-Compliant Details');
     }
 
-    // Generate file
+    // Finally, write the workbook to a file named with today's date
     XLSX.writeFile(wb, `BSS_CIS_Comparison_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
@@ -437,10 +483,18 @@ export default function Home() {
           <h2>Results Summary</h2>
           <div style={styles.stats}>
             <div style={styles.statBox}>Total Controls: {results.length}</div>
-            <div style={styles.statBox}>Failed: {results.filter(r => r.CIS_Status === 'Failed').length}</div>
-            <div style={styles.statBox}>Passed: {results.filter(r => r.CIS_Status === 'Passed').length}</div>
-            <div style={styles.statBox}>With Remarks: {results.filter(r => r.Change_Description_Remarks?.trim()).length}</div>
-            <div style={styles.statBox}>With Exceptions: {results.filter(r => r.Synapxe_Exceptions?.trim()).length}</div>
+            <div style={styles.statBox}>
+              Failed: {results.filter((r) => r.CIS_Status === 'Failed').length}
+            </div>
+            <div style={styles.statBox}>
+              Passed: {results.filter((r) => r.CIS_Status === 'Passed').length}
+            </div>
+            <div style={styles.statBox}>
+              With Remarks: {results.filter((r) => r.Change_Description_Remarks?.trim()).length}
+            </div>
+            <div style={styles.statBox}>
+              With Exceptions: {results.filter((r) => r.Synapxe_Exceptions?.trim()).length}
+            </div>
           </div>
 
           <button onClick={() => generateExcelReport(results)} style={styles.button}>
