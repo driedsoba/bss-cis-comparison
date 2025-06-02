@@ -13,29 +13,46 @@ export default function Home() {
     return raw.replace(/^\(L\d+\)\s*/, '').trim();
   };
 
-  // Simple string similarity using Dice coefficient (no external deps)
+  // Enhanced string similarity with normalization improvements
   const calculateSimilarity = (str1, str2) => {
     if (!str1 || !str2) return 0;
     
-    const normalize = (s) => s.toLowerCase().replace(/[^\w\s]/g, '').trim();
+    const normalize = (s) => {
+      return s
+        .toLowerCase()
+        .normalize('NFD') // Handle Unicode normalization
+        .replace(/[\u0300-\u036f]/g, '') // Remove diacritics
+        .replace(/[''""]/g, "'") // Normalize quotes/apostrophes
+        .replace(/[^\w\s]/g, ' ') // Replace punctuation with spaces
+        .replace(/\s+/g, ' ') // Collapse multiple spaces
+        .trim();
+    };
+    
     const s1 = normalize(str1);
     const s2 = normalize(str2);
     
     if (s1 === s2) return 1.0;
     if (s1.length < 2 || s2.length < 2) return 0;
     
-    const bigrams1 = new Set();
-    const bigrams2 = new Set();
+    // Use trigrams for better accuracy on longer strings
+    const gramSize = Math.min(3, Math.max(2, Math.min(s1.length, s2.length) / 3));
     
-    for (let i = 0; i < s1.length - 1; i++) {
-      bigrams1.add(s1.substr(i, 2));
-    }
-    for (let i = 0; i < s2.length - 1; i++) {
-      bigrams2.add(s2.substr(i, 2));
-    }
+    const getGrams = (str, size) => {
+      const grams = new Set();
+      for (let i = 0; i <= str.length - size; i++) {
+        grams.add(str.substr(i, size));
+      }
+      return grams;
+    };
     
-    const intersection = new Set([...bigrams1].filter(x => bigrams2.has(x)));
-    return (2 * intersection.size) / (bigrams1.size + bigrams2.size);
+    const grams1 = getGrams(s1, gramSize);
+    const grams2 = getGrams(s2, gramSize);
+    
+    const intersection = new Set([...grams1].filter(x => grams2.has(x)));
+    const union = new Set([...grams1, ...grams2]);
+    
+    // Jaccard similarity (more balanced than Dice for this use case)
+    return intersection.size / union.size;
   };
 
   const readBSSFile = async (file) => {
@@ -93,7 +110,8 @@ export default function Home() {
 
   const compareData = (bssData, cisData) => {
     const results = [];
-    const SIMILARITY_THRESHOLD = 0.7; // Adjust this threshold as needed
+    const SIMILARITY_THRESHOLD = 0.75; // Raised from 0.7 based on analysis
+    const EXACT_MATCH_THRESHOLD = 0.95; // For nearly identical strings
 
     // Build fast lookup maps by ID
     const bssMap = new Map(bssData.map((row) => [row['CIS #']?.toString(), row]));
@@ -177,30 +195,62 @@ export default function Home() {
         result.CIS_Status = '';
       }
 
-      // 4) Enhanced title similarity check
+      // 4) Enhanced title similarity check with debug info
       let titleMismatch = false;
       let similarityScore = 1.0;
+      let mismatchReason = '';
       
       if (bssRow && cisRow && result.BSS_Title && result.CIS_Title) {
         similarityScore = calculateSimilarity(result.BSS_Title, result.CIS_Title);
-        titleMismatch = similarityScore < SIMILARITY_THRESHOLD;
+        
+        if (similarityScore >= EXACT_MATCH_THRESHOLD) {
+          titleMismatch = false;
+        } else if (similarityScore < SIMILARITY_THRESHOLD) {
+          titleMismatch = true;
+          mismatchReason = 'Low similarity';
+        } else {
+          // In the gray area - check for common false positives
+          const normalizedBss = result.BSS_Title.toLowerCase().normalize('NFD').replace(/[''""]/g, "'");
+          const normalizedCis = result.CIS_Title.toLowerCase().normalize('NFD').replace(/[''""]/g, "'");
+          
+          if (normalizedBss === normalizedCis) {
+            titleMismatch = false; // Override - they're actually identical
+          } else {
+            titleMismatch = true;
+            mismatchReason = 'Minor differences';
+          }
+        }
       }
       
       result.Title_Similarity = similarityScore;
       result.Title_Mismatch = titleMismatch ? 'Yes' : 'No';
+      result.Mismatch_Reason = mismatchReason;
 
-      // 5) Check for meaningful remark (treat "NIL" or "None" as no remark)
+      // 5) Enhanced remark handling (treat "NIL", "None", "N/A" as no remark)
       let hasRemark = false;
       if (bssRow) {
         const rawRemark = (result.Change_Description_Remarks || '').toString().trim();
         const lowerRemark = rawRemark.toLowerCase();
-        if (lowerRemark !== '' && lowerRemark !== 'nil' && lowerRemark !== 'none') {
+        const nullValues = ['', 'nil', 'none', 'n/a', 'na', 'not applicable'];
+        if (rawRemark && !nullValues.includes(lowerRemark)) {
           hasRemark = true;
         }
       }
       result.Has_Remark = hasRemark ? 'Yes' : 'No';
 
-      // 6) Determine final Compliance_Status & Non_Compliance_Reason
+      // 6) Enhanced exception handling  
+      let hasException = false;
+      if (bssRow) {
+        const rawException = (result.Synapxe_Exceptions || '').toString().trim();
+        const lowerException = rawException.toLowerCase();
+        const nullValues = ['', 'nil', 'none', 'n/a', 'na', 'not applicable'];
+        if (rawException && !nullValues.includes(lowerException)) {
+          hasException = true;
+        }
+      }
+      result.Has_Exception = hasException ? 'Yes' : 'No';
+
+      // 7) Determine final Compliance_Status & Non_Compliance_Reason
       if (bssRow && cisRow) {
         if (result.CIS_Status === 'Failed') {
           result.Compliance_Status = 'Non-Compliant';
@@ -208,10 +258,13 @@ export default function Home() {
         } else if (result.CIS_Status === 'Passed') {
           if (titleMismatch) {
             result.Compliance_Status = 'Non-Compliant';
-            result.Non_Compliance_Reason = 'Title Mismatch';
+            result.Non_Compliance_Reason = `Title Mismatch (${mismatchReason})`;
           } else if (hasRemark) {
             result.Compliance_Status = 'Non-Compliant';
             result.Non_Compliance_Reason = 'Has Remark';
+          } else if (hasException) {
+            result.Compliance_Status = 'Non-Compliant';
+            result.Non_Compliance_Reason = 'Has Exception';
           } else {
             result.Compliance_Status = 'Compliant';
             result.Non_Compliance_Reason = '';
@@ -242,19 +295,37 @@ export default function Home() {
       results.push(result);
     });
 
-    // Secondary pass: detect duplicate/similar titles across different IDs
-    const titleMap = new Map();
+    // Enhanced duplicate detection with fuzzy matching
+    const titleGroups = new Map();
     results.forEach((row) => {
       if (row.BSS_Title) {
-        const key = row.BSS_Title.toLowerCase().trim();
-        if (!titleMap.has(key)) titleMap.set(key, []);
-        titleMap.get(key).push(row.Check_ID);
+        const normalizedTitle = row.BSS_Title.toLowerCase()
+          .normalize('NFD')
+          .replace(/[''""]/g, "'")
+          .replace(/[^\w\s]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        
+        if (!titleGroups.has(normalizedTitle)) {
+          titleGroups.set(normalizedTitle, []);
+        }
+        titleGroups.get(normalizedTitle).push(row.Check_ID);
       }
     });
 
     results.forEach((row) => {
-      const key = row.BSS_Title.toLowerCase().trim();
-      row.Duplicate_Title = titleMap.get(key)?.length > 1 ? 'Yes' : 'No';
+      const normalizedTitle = row.BSS_Title?.toLowerCase()
+        ?.normalize('NFD')
+        ?.replace(/[''""]/g, "'")
+        ?.replace(/[^\w\s]/g, ' ')
+        ?.replace(/\s+/g, ' ')
+        ?.trim();
+      
+      const group = titleGroups.get(normalizedTitle) || [];
+      row.Duplicate_Title = group.length > 1 ? 'Yes' : 'No';
+      if (group.length > 1) {
+        row.Duplicate_IDs = group.filter(id => id !== row.Check_ID).join(', ');
+      }
     });
 
     return results.sort((a, b) => a.Check_ID.localeCompare(b.Check_ID));
