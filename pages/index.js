@@ -917,7 +917,7 @@ export default function Home() {
               {/* Completed */}
               <div style={{
                 background: '#e8f5e8',
-                border: '2px solid '#4caf50',
+                border: '2px solid #4caf50',
                 padding: '10px',
                 borderRadius: '4px'
               }}>
