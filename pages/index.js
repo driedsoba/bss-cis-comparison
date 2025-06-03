@@ -922,16 +922,92 @@ export default function Home() {
             })}
           </div>
 
-          {/* Failures by BSS Category */}
+          {/* Enhanced Dashboard with Findings Categories */}
           <div style={{ margin: '20px 0' }}>
-            <h3 style={{ fontSize: '1.1rem' }}>Non-Compliant by BSS Category</h3>
-            <ul style={{ fontSize: '0.9rem', paddingLeft: '20px' }}>
-              {Object.entries(failByCategory).map(([cat, cnt]) => (
-                <li key={cat}>
-                  {cat}: {cnt}
-                </li>
-              ))}
-            </ul>
+            <h3 style={{ fontSize: '1.1rem', textAlign: 'center' }}>Findings by Category</h3>
+            <div style={{ 
+              display: 'grid', 
+              gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', 
+              gap: '10px',
+              margin: '15px 0'
+            }}>
+              {/* Critical Issues */}
+              <div style={{
+                background: '#ffebee',
+                border: '2px solid #f44336',
+                padding: '10px',
+                borderRadius: '4px'
+              }}>
+                <h4 style={{ margin: '0 0 5px 0', color: '#d32f2f' }}>🔴 Critical Issues</h4>
+                <div>Failed Controls: {results.filter(r => r.CIS_Status === 'Failed').length}</div>
+                <div style={{ fontSize: '0.8rem', color: '#666' }}>Immediate remediation required</div>
+              </div>
+
+              {/* Medium Priority */}
+              <div style={{
+                background: '#fff3e0',
+                border: '2px solid #ff9800',
+                padding: '10px',
+                borderRadius: '4px'
+              }}>
+                <h4 style={{ margin: '0 0 5px 0', color: '#f57c00' }}>🟡 Medium Priority</h4>
+                <div>Title Mismatches: {mismatchCount}</div>
+                <div>Coverage Gaps: {results.filter(r => r.In_BSS === 'Yes' && r.In_CIS_Scan === 'No').length}</div>
+                <div style={{ fontSize: '0.8rem', color: '#666' }}>Review and alignment needed</div>
+              </div>
+
+              {/* Low Priority */}
+              <div style={{
+                background: '#f3e5f5',
+                border: '2px solid #9c27b0',
+                padding: '10px',
+                borderRadius: '4px'
+              }}>
+                <h4 style={{ margin: '0 0 5px 0', color: '#7b1fa2' }}>🟣 Low Priority</h4>
+                <div>Skipped Controls: {results.filter(r => r.CIS_Status === 'Skipped').length}</div>
+                <div>Duplicates: {duplicateCount}</div>
+                <div style={{ fontSize: '0.8rem', color: '#666' }}>Monitor and review periodically</div>
+              </div>
+
+              {/* Completed */}
+              <div style={{
+                background: '#e8f5e8',
+                border: '2px solid '#4caf50',
+                padding: '10px',
+                borderRadius: '4px'
+              }}>
+                <h4 style={{ margin: '0 0 5px 0', color: '#388e3c' }}>✅ Completed</h4>
+                <div>Compliant Controls: {numPassed}</div>
+                <div style={{ fontSize: '0.8rem', color: '#666' }}>No action required</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Action Items Summary */}
+          <div style={{ margin: '20px 0' }}>
+            <h3 style={{ fontSize: '1.1rem' }}>Action Items by Priority</h3>
+            <div style={{ fontSize: '0.9rem' }}>
+              {results.filter(r => r.CIS_Status === 'Failed').length > 0 && (
+                <div style={{ color: '#d32f2f', marginBottom: '5px' }}>
+                  🚨 <strong>CRITICAL:</strong> {results.filter(r => r.CIS_Status === 'Failed').length} failed controls need immediate remediation
+                </div>
+              )}
+              {mismatchCount > 0 && (
+                <div style={{ color: '#f57c00', marginBottom: '5px' }}>
+                  ⚠️ <strong>MEDIUM:</strong> {mismatchCount} title mismatches need review
+                </div>
+              )}
+              {results.filter(r => r.In_BSS === 'Yes' && r.In_CIS_Scan === 'No').length > 0 && (
+                <div style={{ color: '#f57c00', marginBottom: '5px' }}>
+                  📋 <strong>MEDIUM:</strong> {results.filter(r => r.In_BSS === 'Yes' && r.In_CIS_Scan === 'No').length} controls not scanned - verify coverage
+                </div>
+              )}
+              {duplicateCount > 0 && (
+                <div style={{ color: '#7b1fa2', marginBottom: '5px' }}>
+                  📄 <strong>LOW:</strong> {duplicateCount} duplicate titles to consolidate
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Download Button */}
