@@ -592,61 +592,6 @@ export default function Home() {
       XLSX.utils.book_append_sheet(wb, findingsWs, 'FINDINGS');
     }
 
-    // 8) Detailed Findings by Category
-    const detailedFindingsWs = XLSX.utils.book_new();
-    
-    // Failed Controls Detail
-    if (failedControls.length > 0) {
-      const failedDetails = failedControls.map(row => ({
-        'Category': 'CRITICAL - Failed Controls',
-        'Check ID': row.Check_ID,
-        'BSS Title': row.BSS_Title,
-        'CIS Title': row.CIS_Title,
-        'BSS Category': row.BSS_Category,
-        'Synapxe Value': row.Synapxe_Value,
-        'Failed Instances': row.Failed_Instances,
-        'Remarks': row.Change_Description_Remarks,
-        'Action': 'Immediate remediation required'
-      }));
-      
-      const failedWs = XLSX.utils.json_to_sheet(failedDetails);
-      XLSX.utils.book_append_sheet(wb, failedWs, 'Critical Issues');
-    }
-
-    // Title Mismatch Details
-    if (titleMismatchControls.length > 0) {
-      const mismatchDetails = titleMismatchControls.map(row => ({
-        'Category': 'MEDIUM - Title Mismatches',
-        'Check ID': row.Check_ID,
-        'BSS Title': row.BSS_Title,
-        'CIS Title': row.CIS_Title,
-        'Similarity Score': row.Title_Similarity?.toFixed(2) || '',
-        'BSS Category': row.BSS_Category,
-        'Mismatch Reason': row.Mismatch_Reason || 'Title difference',
-        'Action': 'Review and align control definitions'
-      }));
-      
-      const mismatchWs = XLSX.utils.json_to_sheet(mismatchDetails);
-      XLSX.utils.book_append_sheet(wb, mismatchWs, 'Title Mismatches');
-    }
-
-    // Coverage Gaps
-    if (bssOnlyControls.length > 0) {
-      const coverageDetails = bssOnlyControls.map(row => ({
-        'Category': 'MEDIUM - Coverage Gaps',
-        'Check ID': row.Check_ID,
-        'BSS Title': row.BSS_Title,
-        'BSS Category': row.BSS_Category,
-        'Setting Applicability': row.Setting_Applicability,
-        'Synapxe Value': row.Synapxe_Value,
-        'Remarks': row.Change_Description_Remarks,
-        'Action': 'Include in scan or mark as manual verification'
-      }));
-      
-      const coverageWs = XLSX.utils.json_to_sheet(coverageDetails);
-      XLSX.utils.book_append_sheet(wb, coverageWs, 'Coverage Gaps');
-    }
-
     XLSX.writeFile(wb, `BSS_CIS_Comparison_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
