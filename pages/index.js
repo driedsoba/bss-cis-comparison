@@ -334,31 +334,55 @@ export default function Home() {
   const generateExcelReport = (data) => {
     const wb = XLSX.utils.book_new();
 
-    // 1) Full Comparison sheet
-    const fullData = data.map((row) => ({
-      'Check ID': row.Check_ID,
-      'BSS ID': row.BSS_ID,
-      'In BSS': row.In_BSS,
-      'In CIS Scan': row.In_CIS_Scan,
-      'BSS Category': row.BSS_Category,
-      'BSS Title': row.BSS_Title,
-      'CIS Title': row.CIS_Title,
-      'Title Similarity': row.Title_Similarity?.toFixed(2) || '',
-      'Title Mismatch': row.Title_Mismatch,
-      'Duplicate Title': row.Duplicate_Title,
-      'Change Description / Remarks': row.Change_Description_Remarks,
-      'Has Remark': row.Has_Remark,
-      'CIS Status': row.CIS_Status,
-      'CIS Level': row.CIS_Level,
-      'CIS Recommended Value': row.CIS_Recommended_Value,
-      'Synapxe Value': row.Synapxe_Value,
-      'Synapxe Exceptions': row.Synapxe_Exceptions,
-      'Failed Instances': row.Failed_Instances,
-      'Passed Instances': row.Passed_Instances,
-      'Compliance Status': row.Compliance_Status,
-      'Non_Compliance_Reason': row.Non_Compliance_Reason,
-      'Setting Applicability': row.Setting_Applicability
-    }));
+    // 1) Full Comparison sheet with color indicators
+    const fullData = data.map((row) => {
+      let statusIndicator = '';
+      let colorCode = '';
+      
+      if (row.CIS_Status === 'Failed') {
+        statusIndicator = '🔴 CRITICAL';
+        colorCode = 'RED';
+      } else if (row.Title_Mismatch === 'Yes') {
+        statusIndicator = '🟡 REVIEW';
+        colorCode = 'YELLOW';
+      } else if (row.CIS_Status === 'Skipped') {
+        statusIndicator = '⚪ SKIPPED';
+        colorCode = 'GREY';
+      } else if (row.Compliance_Status === 'Compliant') {
+        statusIndicator = '🟢 GOOD';
+        colorCode = 'GREEN';
+      } else {
+        statusIndicator = '⚫ OTHER';
+        colorCode = 'BLACK';
+      }
+      
+      return {
+        'Status': statusIndicator,
+        'Color Code': colorCode,
+        'Check ID': row.Check_ID,
+        'BSS ID': row.BSS_ID,
+        'In BSS': row.In_BSS,
+        'In CIS Scan': row.In_CIS_Scan,
+        'BSS Category': row.BSS_Category,
+        'BSS Title': row.BSS_Title,
+        'CIS Title': row.CIS_Title,
+        'Title Similarity': row.Title_Similarity?.toFixed(2) || '',
+        'Title Mismatch': row.Title_Mismatch,
+        'Duplicate Title': row.Duplicate_Title,
+        'Change Description / Remarks': row.Change_Description_Remarks,
+        'Has Remark': row.Has_Remark,
+        'CIS Status': row.CIS_Status,
+        'CIS Level': row.CIS_Level,
+        'CIS Recommended Value': row.CIS_Recommended_Value,
+        'Synapxe Value': row.Synapxe_Value,
+        'Synapxe Exceptions': row.Synapxe_Exceptions,
+        'Failed Instances': row.Failed_Instances,
+        'Passed Instances': row.Passed_Instances,
+        'Compliance Status': row.Compliance_Status,
+        'Non_Compliance_Reason': row.Non_Compliance_Reason,
+        'Setting Applicability': row.Setting_Applicability
+      };
+    });
     const ws = XLSX.utils.json_to_sheet(fullData);
     XLSX.utils.book_append_sheet(wb, ws, 'Full Comparison');
 
@@ -483,13 +507,14 @@ export default function Home() {
       XLSX.utils.book_append_sheet(wb, nonCompliantWs, 'Non-Compliant Details');
     }
 
-    // 7) FINDINGS Sheet - Categorized Analysis
+    // 7) FINDINGS Sheet - Categorized Analysis with Status Indicators
     const findingsData = [];
     
     // Category 1: Steps done - Controls that are compliant
     const compliantControls = data.filter(r => r.Compliance_Status === 'Compliant');
     if (compliantControls.length > 0) {
       findingsData.push({
+        'Status': '🟢 GREEN',
         'Category': 'Steps done',
         'Count': compliantControls.length,
         'Description': 'Controls that are compliant and properly configured',
@@ -502,6 +527,7 @@ export default function Home() {
     const duplicateControls = data.filter(r => r.Duplicate_Title === 'Yes');
     if (duplicateControls.length > 0) {
       findingsData.push({
+        'Status': '🟡 YELLOW',
         'Category': 'Check duplicates in BSS',
         'Count': duplicateControls.length,
         'Description': 'Controls with duplicate titles across different IDs',
@@ -514,6 +540,7 @@ export default function Home() {
     const bssOnlyControls = data.filter(r => r.In_BSS === 'Yes' && r.In_CIS_Scan === 'No');
     if (bssOnlyControls.length > 0) {
       findingsData.push({
+        'Status': '🟡 YELLOW',
         'Category': 'Check for CIS ID (SCAN) in BSS but not in CIS (SCAN)',
         'Count': bssOnlyControls.length,
         'Description': 'Controls defined in baseline but not scanned by CIS',
@@ -529,6 +556,7 @@ export default function Home() {
     );
     if (orphanedBssControls.length > 0) {
       findingsData.push({
+        'Status': '🟡 YELLOW',
         'Category': 'Check for BSS ID (SCAN) in BSS but not in CIS (SCAN)',
         'Count': orphanedBssControls.length,
         'Description': 'Server-applicable controls not included in scan',
@@ -541,6 +569,7 @@ export default function Home() {
     const failedControls = data.filter(r => r.CIS_Status === 'Failed');
     if (failedControls.length > 0) {
       findingsData.push({
+        'Status': '🔴 RED',
         'Category': 'Check for Red Highlighted CIS ID (SCAN)',
         'Count': failedControls.length,
         'Description': 'Controls that failed the CIS compliance scan',
@@ -553,6 +582,7 @@ export default function Home() {
     const titleMismatchControls = data.filter(r => r.Title_Mismatch === 'Yes');
     if (titleMismatchControls.length > 0) {
       findingsData.push({
+        'Status': '🟡 YELLOW',
         'Category': 'Check for Yellow Highlighted CIS ID (SCAN)',
         'Count': titleMismatchControls.length,
         'Description': 'Controls with title mismatches between BSS and CIS',
@@ -565,6 +595,7 @@ export default function Home() {
     const skippedControls = data.filter(r => r.CIS_Status === 'Skipped');
     if (skippedControls.length > 0) {
       findingsData.push({
+        'Status': '⚪ GREY',
         'Category': 'Check for Grey Highlighted CIS ID (SCAN)',
         'Count': skippedControls.length,
         'Description': 'Controls that were skipped during the scan',
