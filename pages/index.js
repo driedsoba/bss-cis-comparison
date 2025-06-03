@@ -483,6 +483,170 @@ export default function Home() {
       XLSX.utils.book_append_sheet(wb, nonCompliantWs, 'Non-Compliant Details');
     }
 
+    // 7) FINDINGS Sheet - Categorized Analysis
+    const findingsData = [];
+    
+    // Category 1: Steps done - Controls that are compliant
+    const compliantControls = data.filter(r => r.Compliance_Status === 'Compliant');
+    if (compliantControls.length > 0) {
+      findingsData.push({
+        'Category': 'Steps done',
+        'Count': compliantControls.length,
+        'Description': 'Controls that are compliant and properly configured',
+        'Action Required': 'None - Continue monitoring',
+        'Priority': 'Low'
+      });
+    }
+
+    // Category 2: Check duplicates in BSS
+    const duplicateControls = data.filter(r => r.Duplicate_Title === 'Yes');
+    if (duplicateControls.length > 0) {
+      findingsData.push({
+        'Category': 'Check duplicates in BSS',
+        'Count': duplicateControls.length,
+        'Description': 'Controls with duplicate titles across different IDs',
+        'Action Required': 'Review and consolidate duplicate controls',
+        'Priority': 'Medium'
+      });
+    }
+
+    // Category 3: Check for CIS ID (SCAN) in BSS but not in CIS (SCAN)
+    const bssOnlyControls = data.filter(r => r.In_BSS === 'Yes' && r.In_CIS_Scan === 'No');
+    if (bssOnlyControls.length > 0) {
+      findingsData.push({
+        'Category': 'Check for CIS ID (SCAN) in BSS but not in CIS (SCAN)',
+        'Count': bssOnlyControls.length,
+        'Description': 'Controls defined in baseline but not scanned by CIS',
+        'Action Required': 'Verify scan coverage or update baseline scope',
+        'Priority': 'Medium'
+      });
+    }
+
+    // Category 4: Check for BSS ID (SCAN) in BSS but not in CIS (SCAN)
+    const orphanedBssControls = data.filter(r => 
+      r.In_BSS === 'Yes' && r.In_CIS_Scan === 'No' && 
+      (r.Setting_Applicability || '').toLowerCase().includes('server')
+    );
+    if (orphanedBssControls.length > 0) {
+      findingsData.push({
+        'Category': 'Check for BSS ID (SCAN) in BSS but not in CIS (SCAN)',
+        'Count': orphanedBssControls.length,
+        'Description': 'Server-applicable controls not included in scan',
+        'Action Required': 'Include in next scan or mark as manual check',
+        'Priority': 'High'
+      });
+    }
+
+    // Category 5: Check for Red Highlighted CIS ID (SCAN)
+    const failedControls = data.filter(r => r.CIS_Status === 'Failed');
+    if (failedControls.length > 0) {
+      findingsData.push({
+        'Category': 'Check for Red Highlighted CIS ID (SCAN)',
+        'Count': failedControls.length,
+        'Description': 'Controls that failed the CIS compliance scan',
+        'Action Required': 'Immediate remediation required',
+        'Priority': 'Critical'
+      });
+    }
+
+    // Category 6: Check for Yellow Highlighted CIS ID (SCAN)
+    const titleMismatchControls = data.filter(r => r.Title_Mismatch === 'Yes');
+    if (titleMismatchControls.length > 0) {
+      findingsData.push({
+        'Category': 'Check for Yellow Highlighted CIS ID (SCAN)',
+        'Count': titleMismatchControls.length,
+        'Description': 'Controls with title mismatches between BSS and CIS',
+        'Action Required': 'Review and align control definitions',
+        'Priority': 'Medium'
+      });
+    }
+
+    // Category 7: Check for Grey Highlighted CIS ID (SCAN)
+    const skippedControls = data.filter(r => r.CIS_Status === 'Skipped');
+    if (skippedControls.length > 0) {
+      findingsData.push({
+        'Category': 'Check for Grey Highlighted CIS ID (SCAN)',
+        'Count': skippedControls.length,
+        'Description': 'Controls that were skipped during the scan',
+        'Action Required': 'Review scan configuration and applicability',
+        'Priority': 'Low'
+      });
+    }
+
+    // Add the FINDINGS sheet
+    if (findingsData.length > 0) {
+      const findingsWs = XLSX.utils.json_to_sheet(findingsData);
+      
+      // Add some styling information (Excel will need to be manually formatted)
+      const range = XLSX.utils.decode_range(findingsWs['!ref']);
+      
+      // Set column widths
+      findingsWs['!cols'] = [
+        { width: 40 }, // Category
+        { width: 10 }, // Count
+        { width: 60 }, // Description
+        { width: 50 }, // Action Required
+        { width: 15 }  // Priority
+      ];
+      
+      XLSX.utils.book_append_sheet(wb, findingsWs, 'FINDINGS');
+    }
+
+    // 8) Detailed Findings by Category
+    const detailedFindingsWs = XLSX.utils.book_new();
+    
+    // Failed Controls Detail
+    if (failedControls.length > 0) {
+      const failedDetails = failedControls.map(row => ({
+        'Category': 'CRITICAL - Failed Controls',
+        'Check ID': row.Check_ID,
+        'BSS Title': row.BSS_Title,
+        'CIS Title': row.CIS_Title,
+        'BSS Category': row.BSS_Category,
+        'Synapxe Value': row.Synapxe_Value,
+        'Failed Instances': row.Failed_Instances,
+        'Remarks': row.Change_Description_Remarks,
+        'Action': 'Immediate remediation required'
+      }));
+      
+      const failedWs = XLSX.utils.json_to_sheet(failedDetails);
+      XLSX.utils.book_append_sheet(wb, failedWs, 'Critical Issues');
+    }
+
+    // Title Mismatch Details
+    if (titleMismatchControls.length > 0) {
+      const mismatchDetails = titleMismatchControls.map(row => ({
+        'Category': 'MEDIUM - Title Mismatches',
+        'Check ID': row.Check_ID,
+        'BSS Title': row.BSS_Title,
+        'CIS Title': row.CIS_Title,
+        'Similarity Score': row.Title_Similarity?.toFixed(2) || '',
+        'BSS Category': row.BSS_Category,
+        'Mismatch Reason': row.Mismatch_Reason || 'Title difference',
+        'Action': 'Review and align control definitions'
+      }));
+      
+      const mismatchWs = XLSX.utils.json_to_sheet(mismatchDetails);
+      XLSX.utils.book_append_sheet(wb, mismatchWs, 'Title Mismatches');
+    }
+
+    // Coverage Gaps
+    if (bssOnlyControls.length > 0) {
+      const coverageDetails = bssOnlyControls.map(row => ({
+        'Category': 'MEDIUM - Coverage Gaps',
+        'Check ID': row.Check_ID,
+        'BSS Title': row.BSS_Title,
+        'BSS Category': row.BSS_Category,
+        'Setting Applicability': row.Setting_Applicability,
+        'Synapxe Value': row.Synapxe_Value,
+        'Remarks': row.Change_Description_Remarks,
+        'Action': 'Include in scan or mark as manual verification'
+      }));
+      
+      const coverageWs = XLSX.utils.json_to_sheet(coverageDetails);
+      XLSX.utils.book_append_sheet(wb, coverageWs, 'Coverage Gaps');
+    }
+
     XLSX.writeFile(wb, `BSS_CIS_Comparison_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
