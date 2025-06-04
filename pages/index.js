@@ -10,7 +10,7 @@ const cleanTitle = (s = "") =>
   stripLevel(s)
     .replace(/\((ms|dc) only\)/gi, "")
     .replace(/_x000d_\n/g, " ")
-    .replace(/["""']/g, "")
+    .replace(/["""'']/g, "") // Include both types of quotes
     .replace(/[^a-z0-9 ]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -111,20 +111,61 @@ export default function BSSCISAnalyzer() {
 
       /* ---- merge ---- */
       const merged=[];
+      const cisUsed = new Set();
+      
       bssRows.forEach(b=>{
         const id=b["cis #"];
         let cis=cisMap.get(squash(id));
-        if(!cis){
+        
+        // If no exact ID match, try fuzzy title matching
+        if(!cis && id){
           const t=cleanTitle(b["synapxe setting title"]||b["cis setting title (for reference only)"]);
-          cis=cisRows.find(c=>cosine(t,cleanTitle(c.title))>0.93);
+          const matches = cisRows.filter(c => {
+            if(cisUsed.has(c.check_id)) return false;
+            const similarity = cosine(t,cleanTitle(c.title));
+            return similarity > 0.85; // Lower threshold for better matching
+          });
+          if(matches.length === 1) {
+            cis = matches[0];
+          } else if(matches.length > 1) {
+            // Pick best match
+            cis = matches.reduce((best, curr) => 
+              cosine(t,cleanTitle(curr.title)) > cosine(t,cleanTitle(best.title)) ? curr : best
+            );
+          }
         }
+        
+        if(cis) cisUsed.add(cis.check_id);
         merged.push(buildRec(b,cis));
       });
-      cisRows.forEach(c=>{ if(!merged.find(m=>squash(m.CIS_ID)===squash(c.check_id))) merged.push(buildRec(null,c)); });
+      
+      // Add unmatched CIS records
+      cisRows.forEach(c=>{ 
+        if(!cisUsed.has(c.check_id)) {
+          merged.push(buildRec(null,c));
+        }
+      });
 
       /* ---- same title diff ID ---- */
-      const titleGroups=_.groupBy(merged,m=>cleanTitle(m.BSS_Title||m.CIS_Title));
-      const sameTitleDiffId=Object.values(titleGroups).filter(g=>_.uniqBy(g,x=>`${x.CIS_ID}|${x.BSS_ID}`).length>1).flat();
+      const titleGroups = {};
+      merged.forEach(m => {
+        const title = cleanTitle(m.BSS_Title || m.CIS_Title);
+        if (title && title !== "n a") { // Skip empty/NA titles
+          if (!titleGroups[title]) titleGroups[title] = [];
+          titleGroups[title].push(m);
+        }
+      });
+      
+      const sameTitleDiffId = [];
+      Object.values(titleGroups).forEach(group => {
+        if (group.length > 1) {
+          // Check if they actually have different IDs
+          const uniqueIds = new Set(group.map(g => `${g.BSS_ID}|${g.CIS_ID}`));
+          if (uniqueIds.size > 1) {
+            sameTitleDiffId.push(...group);
+          }
+        }
+      });
 
       /* ---- summary ---- */
       const count=fn=>merged.filter(fn).length;
@@ -151,7 +192,26 @@ export default function BSSCISAnalyzer() {
         passRate:items.length>0?Math.round(items.filter(i=>i.Compliance==="Pass").length/items.length*100):0,
       }));
 
-      setAnalysis({merged,summary,categoryStats,sameTitleDiffId});
+      /* ---- same ID diff title ---- */
+      const sameIdDiffTitle = [];
+      const idGroups = {};
+      
+      merged.forEach(m => {
+        if (m.BSS_ID && m.CIS_ID && m.BSS_ID === m.CIS_ID) {
+          const id = m.BSS_ID;
+          if (!idGroups[id]) idGroups[id] = [];
+          idGroups[id].push(m);
+        }
+      });
+      
+      Object.entries(idGroups).forEach(([id, records]) => {
+        if (records.length === 1 && records[0].Title_Match === "No") {
+          // Single record with same ID but different titles
+          sameIdDiffTitle.push(records[0]);
+        }
+      });
+
+      setAnalysis({merged,summary,categoryStats,sameTitleDiffId,sameIdDiffTitle});
     } catch (err) {
       alert("Error: " + err.message);
     }
@@ -177,6 +237,11 @@ export default function BSSCISAnalyzer() {
     /* Same title diff ID */
     if(analysis.sameTitleDiffId.length>0){
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(analysis.sameTitleDiffId), "Same Title Diff ID");
+    }
+    
+    /* Same ID diff title */
+    if(analysis.sameIdDiffTitle && analysis.sameIdDiffTitle.length>0){
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(analysis.sameIdDiffTitle), "Same ID Diff Title");
     }
     
     XLSX.writeFile(wb, `BSS_CIS_Analysis_${new Date().toISOString().slice(0,10)}.xlsx`);
