@@ -58,22 +58,36 @@ export default function BSSCISAnalyzer() {
     return k ? row[k] : "";
   };
 
-  const buildRec = (b, c) => ({
-    BSS_ID: b ? b["cis #"] || "" : "",
-    CIS_ID: c ? c.check_id || "" : "",
-    BSS_Title: b ? b["synapxe setting title"] || b["cis setting title (for reference only)"] || "" : "",
-    CIS_Title: c ? c.title || "" : "",
-    Title_Match: cleanTitle(b ? b["synapxe setting title"] || "" : "") === cleanTitle(c ? c.title || "" : "") ? "Yes" : "No",
-    BSS_Category: b ? b.category || b["cis section header"] || "Uncategorised" : "Uncategorised",
-    "Synapxe Value": pickCol(b, "synapxe value"),
-    "Synapxe Exceptions": pickCol(b, "synapxe exceptions"),
-    "CIS Recommended Value": pickCol(b, "cis recommended value"),
-    "Setting Applicability": pickCol(b, "setting applicability"),
-    "Change Description / Remarks": pickCol(b, "change description"),
-    Passed: c ? c.passed_instances : "",
-    Failed: c ? c.failed_instances : "",
-    Compliance: compStatus(c),
-  });
+  const buildRec = (b, c) => {
+    // Fix category extraction - should use "cis section header" not "category"
+    const bssCategory = b ? (b["cis section header"] || "Uncategorised") : "Uncategorised";
+    
+    // Better title extraction with fallback
+    const bssTitle = b ? (b["synapxe setting title"] || b["cis setting title (for reference only)"] || "") : "";
+    const cisTitle = c ? (c.title || "") : "";
+    
+    // Improved title matching after normalization
+    const normalizedBssTitle = cleanTitle(bssTitle);
+    const normalizedCisTitle = cleanTitle(cisTitle);
+    const titleMatch = (normalizedBssTitle && normalizedCisTitle && normalizedBssTitle === normalizedCisTitle) ? "Yes" : "No";
+    
+    return {
+      BSS_ID: b ? b["cis #"] || "" : "",
+      CIS_ID: c ? c.check_id || "" : "",
+      BSS_Title: bssTitle,
+      CIS_Title: cisTitle,
+      Title_Match: titleMatch,
+      BSS_Category: bssCategory,
+      "Synapxe Value": pickCol(b, "synapxe value"),
+      "Synapxe Exceptions": pickCol(b, "synapxe exceptions"),
+      "CIS Recommended Value": pickCol(b, "cis recommended value"),
+      "Setting Applicability": pickCol(b, "setting applicability"),
+      "Change Description / Remarks": pickCol(b, "change description"),
+      Passed: c ? c.passed_instances : "",
+      Failed: c ? c.failed_instances : "",
+      Compliance: compStatus(c),
+    };
+  };
 
   /************************* Main processing *************************/
   const processFiles = async (bssFile, cisFile) => {
