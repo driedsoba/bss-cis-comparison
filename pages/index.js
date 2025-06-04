@@ -10,7 +10,7 @@ const cleanTitle = (s = "") =>
   stripLevel(s)
     .replace(/\((ms|dc) only\)/gi, "")
     .replace(/_x000d_\n/g, " ")
-    .replace(/[“”"']/g, "")
+    .replace(/["""']/g, "")
     .replace(/[^a-z0-9 ]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -117,4 +117,139 @@ export default function BSSCISAnalyzer() {
       const summary={
         total:merged.length,
         bssOnly:count(m=>m.BSS_ID&&!m.CIS_ID),
-        cisOnly:count(m=>!m.BSS_ID&&
+        cisOnly:count(m=>!m.BSS_ID&&m.CIS_ID),
+        both:count(m=>m.BSS_ID&&m.CIS_ID),
+        passed:count(m=>m.Compliance==="Pass"),
+        failed:count(m=>m.Compliance==="Fail"),
+        skipped:count(m=>m.Compliance==="Skipped"),
+        notScanned:count(m=>m.Compliance==="Not Scanned"),
+        titleMatch:count(m=>m.Title_Match==="Yes"),
+        titleMismatch:count(m=>m.Title_Match==="No"&&m.BSS_ID&&m.CIS_ID),
+      };
+
+      /* ---- by category ---- */
+      const byCategory=_.groupBy(merged,"BSS_Category");
+      const categoryStats=Object.entries(byCategory).map(([cat,items])=>({
+        category:cat,
+        total:items.length,
+        passed:items.filter(i=>i.Compliance==="Pass").length,
+        failed:items.filter(i=>i.Compliance==="Fail").length,
+        passRate:items.length>0?Math.round(items.filter(i=>i.Compliance==="Pass").length/items.length*100):0,
+      }));
+
+      setAnalysis({merged,summary,categoryStats,sameTitleDiffId});
+    } catch (err) {
+      alert("Error: " + err.message);
+    }
+    setLoading(false);
+  };
+
+  /************************* Export *************************/
+  const exportExcel = () => {
+    if (!analysis) return;
+    const wb = XLSX.utils.book_new();
+    
+    /* Main sheet */
+    const ws = XLSX.utils.json_to_sheet(analysis.merged);
+    XLSX.utils.book_append_sheet(wb, ws, "Full Comparison");
+    
+    /* Summary sheet */
+    const summaryData = Object.entries(analysis.summary).map(([k,v])=>({Metric:k.replace(/([A-Z])/g," $1").trim(),Count:v}));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summaryData), "Summary");
+    
+    /* Category sheet */
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(analysis.categoryStats), "By Category");
+    
+    /* Same title diff ID */
+    if(analysis.sameTitleDiffId.length>0){
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(analysis.sameTitleDiffId), "Same Title Diff ID");
+    }
+    
+    XLSX.writeFile(wb, `BSS_CIS_Analysis_${new Date().toISOString().slice(0,10)}.xlsx`);
+  };
+
+  /************************* Render *************************/
+  return (
+    <div style={{padding:"1.5rem",maxWidth:"1200px",margin:"0 auto"}}>
+      <h1>BSS-CIS Compliance Analyzer</h1>
+      
+      <div style={{marginBottom:"2rem"}}>
+        <div style={{marginBottom:"0.75rem"}}>
+          <label>BSS Excel: </label>
+          <input type="file" id="bss" accept=".xlsx,.xls" />
+        </div>
+        <div style={{marginBottom:"0.75rem"}}>
+          <label>CIS CSV: </label>
+          <input type="file" id="cis" accept=".csv" />
+        </div>
+        <button 
+          className="primary"
+          onClick={()=>{
+            const b=document.getElementById("bss").files[0];
+            const c=document.getElementById("cis").files[0];
+            if(b&&c) processFiles(b,c);
+            else alert("Select both files");
+          }}
+          disabled={loading}
+        >
+          {loading?"Processing...":"Analyze"}
+        </button>
+      </div>
+
+      {analysis && (
+        <>
+          <div className="grid">
+            <div className="card" style={{"--clr":"#2563eb"}}>
+              <h3>Total Controls</h3>
+              <div className="v">{analysis.summary.total}</div>
+            </div>
+            <div className="card" style={{"--clr":"#16a34a"}}>
+              <h3>Passed</h3>
+              <div className="v">{analysis.summary.passed}</div>
+            </div>
+            <div className="card" style={{"--clr":"#dc2626"}}>
+              <h3>Failed</h3>
+              <div className="v">{analysis.summary.failed}</div>
+            </div>
+            <div className="card" style={{"--clr":"#f59e0b"}}>
+              <h3>Title Mismatches</h3>
+              <div className="v">{analysis.summary.titleMismatch}</div>
+            </div>
+          </div>
+
+          <h2 style={{fontSize:"1.3rem",marginTop:"2rem"}}>Compliance by Category</h2>
+          <table>
+            <thead>
+              <tr>
+                <th>Category</th>
+                <th>Total</th>
+                <th>Passed</th>
+                <th>Failed</th>
+                <th>Pass Rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              {analysis.categoryStats.map((s,i)=>(
+                <tr key={i}>
+                  <td>{s.category}</td>
+                  <td>{s.total}</td>
+                  <td>{s.passed}</td>
+                  <td>{s.failed}</td>
+                  <td>
+                    <span className="pill" style={{background:s.passRate>=80?"#16a34a":s.passRate>=50?"#f59e0b":"#dc2626"}}>
+                      {s.passRate}%
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <button className="primary export" onClick={exportExcel}>
+            Export to Excel
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
