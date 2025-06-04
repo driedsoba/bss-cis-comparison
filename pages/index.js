@@ -4,14 +4,14 @@ import Papa from "papaparse";
 import _ from "lodash";
 
 /*───────────────────────────────────────────────────────────*
-  Normalisation & helpers
+  Normalisation helpers
  *───────────────────────────────────────────────────────────*/
 const squash = (s = "") => s.toString().toLowerCase().replace(/\s+/g, " ").trim();
 const stripLevel = (s = "") => squash(s).replace(/^\(l[0-9]+\)\s*/, "");
 const cleanTitle = (s = "") =>
   stripLevel(s)
-    .replace(/\((ms|dc) only\)/gi, "") // remove (MS only)/(DC only)
-    .replace(/_x000d_\n/g, " ") // Excel linebreak artefact
+    .replace(/\((ms|dc) only\)/gi, "")
+    .replace(/_x000d_\n/g, " ")
     .replace(/[“”"']/g, "")
     .replace(/[^a-z0-9 ]+/g, " ")
     .replace(/\s+/g, " ")
@@ -39,7 +39,7 @@ export default function BSSCISAnalyzer() {
   const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  /* inject css once */
+  /* inject CSS once */
   useEffect(() => {
     if (document.getElementById("bss-cis-css")) return;
     const s = document.createElement("style");
@@ -78,11 +78,10 @@ export default function BSSCISAnalyzer() {
     Compliance: compStatus(c),
   });
 
-  /* main */
   const processFiles = async (bssFile, cisFile) => {
     setLoading(true);
     try {
-      /* BSS */
+      /* ---- BSS ---- */
       const wb = XLSX.read(await readBuf(bssFile));
       const sheetName = wb.SheetNames.find((n) => /settings|windows/i.test(n)) || wb.SheetNames[0];
       const raw = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: "" });
@@ -91,13 +90,14 @@ export default function BSSCISAnalyzer() {
       const hdrs = raw[hdrIdx].map((h) => squash(h));
       const bssRows = raw.slice(hdrIdx + 1).filter((r) => r.some(Boolean)).map((r) => { const o = {}; hdrs.forEach((h,i)=>o[h]=r[i]); return o; });
 
-      /* CIS */
+      /* ---- CIS ---- */
       const txt = await readTxt(cisFile);
       const arr = txt.split(/\r?\n/);
       const start = arr.findIndex((l)=>l.includes("check_id"));
       const cisRows = Papa.parse(arr.slice(start).join("\n"), { header:true,dynamicTyping:true,skipEmptyLines:true }).data;
       const cisMap = new Map(cisRows.map((c)=>[squash(c.check_id), c]));
 
+      /* ---- merge ---- */
       const merged=[];
       bssRows.forEach(b=>{
         const id=b["cis #"]; let cis=cisMap.get(squash(id));
@@ -109,11 +109,11 @@ export default function BSSCISAnalyzer() {
       });
       cisRows.forEach(c=>{ if(!merged.find(m=>squash(m.CIS_ID)===squash(c.check_id))) merged.push(buildRec(null,c)); });
 
+      /* title dupes */
       const titleGroups=_.groupBy(merged,m=>cleanTitle(m.BSS_Title||m.CIS_Title));
       const sameTitleDiffId=Object.values(titleGroups).filter(g=>_.uniqBy(g,x=>x.CIS_ID+"|"+x.BSS_ID).length>1).flat();
 
       const count=fn=>merged.filter(fn).length;
       const summary={
         total:merged.length,
-        bssOnly:count(m=>m.BSS_ID&&!m.CIS_ID),
-        cisOnly:count(m=>!m.BSS
+        bssOnly:count(m=>m.BSS_ID&&!m
