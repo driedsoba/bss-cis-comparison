@@ -292,7 +292,7 @@ const BSSCISAnalyzer = () => {
       const cisText = await readFileAsText(cisFile);
       const cisLines = cisText.split('\n');
       const dataStartIndex = cisLines.findIndex(line => line.includes('check_id'));
-      const cisDataOnly = cisLines.slice(dataStartIndex).join('\n');
+      const cisDataOnly = cisLines.slice(dataStartIndex === -1 ? 0 : dataStartIndex).join('\n');
       
       const cisParsed = Papa.parse(cisDataOnly, {
         header: true,
