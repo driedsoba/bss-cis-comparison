@@ -3,7 +3,7 @@ import * as XLSX from "xlsx";
 import Papa from "papaparse";
 import _ from "lodash";
 
-/******************** Normalisation helpers ********************/
+/************************* Normalisation helpers *************************/
 const squash = (s = "") => s.toString().toLowerCase().replace(/\s+/g, " ").trim();
 const stripLevel = (s = "") => squash(s).replace(/^\(l\d+\)\s*/, "");
 const cleanTitle = (s = "") =>
@@ -27,7 +27,7 @@ const cosine = (a, b) => {
   return dot / ((mag(v1) || 1) * (mag(v2) || 1));
 };
 
-/******************** File helpers ********************/
+/************************* File helpers *************************/
 const readBuf = (f) => new Promise((res, rej) => { const r = new FileReader(); r.onload = (e) => res(e.target.result); r.onerror = rej; r.readAsArrayBuffer(f); });
 const readTxt = (f) => new Promise((res, rej) => { const r = new FileReader(); r.onload = (e) => res(e.target.result); r.onerror = rej; r.readAsText(f); });
 
@@ -35,7 +35,7 @@ export default function BSSCISAnalyzer() {
   const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(false);
 
-  /******************** CSS once ********************/
+  /************************* CSS once *************************/
   useEffect(() => {
     if (document.getElementById("bss-css")) return;
     const style = document.createElement("style");
@@ -44,7 +44,7 @@ export default function BSSCISAnalyzer() {
     document.head.appendChild(style);
   }, []);
 
-  /******************** Helpers ********************/
+  /************************* Utility funcs *************************/
   const compStatus = (c) => {
     if (!c) return "Not Scanned";
     if (c.failed_instances && c.failed_instances !== "None") return "Fail";
@@ -75,11 +75,11 @@ export default function BSSCISAnalyzer() {
     Compliance: compStatus(c),
   });
 
-  /******************** Main processing ********************/
+  /************************* Main processing *************************/
   const processFiles = async (bssFile, cisFile) => {
     setLoading(true);
     try {
-      /* BSS */
+      /* ---- BSS ---- */
       const wb = XLSX.read(await readBuf(bssFile));
       const sheetName = wb.SheetNames.find((n) => /settings|windows/i.test(n)) || wb.SheetNames[0];
       const raw = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: "" });
@@ -88,13 +88,14 @@ export default function BSSCISAnalyzer() {
       const hdrs = raw[hdrIdx].map((h) => squash(h));
       const bssRows = raw.slice(hdrIdx + 1).filter((r) => r.some(Boolean)).map((r) => { const o = {}; hdrs.forEach((h,i)=>o[h]=r[i]); return o; });
 
-      /* CIS */
-      const text = await readTxt(cisFile);
-      const arr = text.split(/\r?\n/);
+      /* ---- CIS ---- */
+      const txt = await readTxt(cisFile);
+      const arr = txt.split(/\r?\n/);
       const start = arr.findIndex((l) => l.includes("check_id"));
       const cisRows = Papa.parse(arr.slice(start).join("\n"), { header:true,dynamicTyping:true,skipEmptyLines:true }).data;
-      const cisMap = new Map(cisRows.map((c) => [squash(c.check_id), c]));
+      const cisMap = new Map(cisRows.map((c)=>[squash(c.check_id), c]));
 
+      /* ---- merge ---- */
       const merged=[];
       bssRows.forEach(b=>{
         const id=b["cis #"];
@@ -107,13 +108,13 @@ export default function BSSCISAnalyzer() {
       });
       cisRows.forEach(c=>{ if(!merged.find(m=>squash(m.CIS_ID)===squash(c.check_id))) merged.push(buildRec(null,c)); });
 
-      /* same title diff ID */
+      /* ---- same title diff ID ---- */
       const titleGroups=_.groupBy(merged,m=>cleanTitle(m.BSS_Title||m.CIS_Title));
       const sameTitleDiffId=Object.values(titleGroups).filter(g=>_.uniqBy(g,x=>`${x.CIS_ID}|${x.BSS_ID}`).length>1).flat();
 
-      /* summary */
+      /* ---- summary ---- */
       const count=fn=>merged.filter(fn).length;
       const summary={
         total:merged.length,
         bssOnly:count(m=>m.BSS_ID&&!m.CIS_ID),
-        cisOnly:count(m=>!m.BSS_ID&&m.CIS
+        cisOnly:count(m=>!m.BSS_ID&&
