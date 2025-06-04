@@ -245,8 +245,47 @@ const BSSCISAnalyzer = () => {
       // Read BSS Excel
       const bssBuffer = await readFileAsArrayBuffer(bssFile);
       const bssWorkbook = XLSX.read(bssBuffer);
-      const bssSheet = bssWorkbook.Sheets[bssWorkbook.SheetNames[0]];
-      const bssData = XLSX.utils.sheet_to_json(bssSheet);
+      
+      // Get the correct sheet - "Windows Servers 2019 settings"
+      const sheetName = bssWorkbook.SheetNames.find(name => 
+        name.includes('settings') || name.includes('Windows')
+      ) || bssWorkbook.SheetNames[1];
+      
+      const bssSheet = bssWorkbook.Sheets[sheetName];
+      
+      // Read the sheet with header row at position 5 (0-indexed = 4)
+      const rawData = XLSX.utils.sheet_to_json(bssSheet, {header: 1, defval: ''});
+      
+      // Find the header row
+      const headerRowIndex = rawData.findIndex(row => 
+        row.some(cell => cell && (
+          cell.toString().includes('Category') || 
+          cell.toString().includes('CIS #')
+        ))
+      );
+      
+      if (headerRowIndex === -1) {
+        throw new Error('Could not find header row in BSS file');
+      }
+      
+      // Extract headers and data
+      const headers = rawData[headerRowIndex];
+      const dataRows = rawData.slice(headerRowIndex + 1);
+      
+      // Convert to objects with proper field mapping
+      const bssData = dataRows
+        .filter(row => row.some(cell => cell)) // Skip empty rows
+        .map(row => {
+          const obj = {};
+          headers.forEach((header, index) => {
+            if (header && row[index] !== undefined) {
+              // Clean header names
+              const cleanHeader = header.toString().replace(/\r?\n/g, ' ').trim();
+              obj[cleanHeader] = row[index];
+            }
+          });
+          return obj;
+        });
 
       // Read CIS CSV
       const cisText = await readFileAsText(cisFile);
@@ -296,28 +335,30 @@ const BSSCISAnalyzer = () => {
     const merged = [];
     
     bssData.forEach(bss => {
-      const bssId = bss['BSS ID'] || bss['ID'];
-      const cisId = bss['CIS #'] || bssId;
-      const cisRecord = cisMap.get(cisId);
+      // Map the BSS fields correctly based on actual column names
+      const bssId = bss['CIS #'];
+      const cisRecord = cisMap.get(bssId);
       
       const record = {
         BSS_ID: bssId,
-        CIS_ID: cisRecord?.check_id || cisId,
-        BSS_Title: bss['Title'] || bss['BSS Title'],
+        CIS_ID: cisRecord?.check_id || bssId,
+        BSS_Title: bss['Synapxe Setting Title'] || bss['CIS Setting Title (for reference only)'],
         CIS_Title: cisRecord?.title,
-        BSS_Category: bss['Category'],
-        BSS_Expected_Value: bss['Expected Value'] || bss['Value'],
+        BSS_Category: bss['Category'] || bss['CIS Section Header'],
+        BSS_Expected_Value: bss['Synapxe Value'] || bss['CIS Recommended Value (for reference only)'],
         CIS_Value: extractCISValue(cisRecord),
-        CIS_Status: cisRecord?.status || determineStatus(cisRecord),
+        CIS_Status: determineStatus(cisRecord),
         Compliance: determineCompliance(bss, cisRecord),
         Title_Similarity: calculateSimilarity(
-          bss['Title'] || bss['BSS Title'], 
+          bss['Synapxe Setting Title'] || bss['CIS Setting Title (for reference only)'], 
           cisRecord?.title
         ),
-        BSS_Exceptions: bss['Synapxe Exceptions'],
+        BSS_Exceptions: bss['Synapxe Exceptions (Default exceptions to refer to CIS Benchmark)'],
         CIS_Remediation: cisRecord?.remediation,
         Failed_Instances: cisRecord?.failed_instances,
-        Passed_Instances: cisRecord?.passed_instances
+        Passed_Instances: cisRecord?.passed_instances,
+        Remarks: bss['Change Description / Remarks'],
+        Applicability: bss['Setting Applicability (refer to compliance section under Cover tab)']
       };
       
       merged.push(record);
@@ -334,7 +375,7 @@ const BSSCISAnalyzer = () => {
           BSS_Category: 'Uncategorized',
           BSS_Expected_Value: null,
           CIS_Value: extractCISValue(cis),
-          CIS_Status: cis.status || 'Unknown',
+          CIS_Status: determineStatus(cis),
           Compliance: 'No BSS Mapping',
           Title_Similarity: 0,
           CIS_Remediation: cis.remediation
@@ -348,7 +389,10 @@ const BSSCISAnalyzer = () => {
   const extractCISValue = (cisRecord) => {
     if (!cisRecord) return null;
     // Extract actual value from description or use status
-    return cisRecord.actual_value || cisRecord.status || 'Not Available';
+    if (cisRecord.failed_instances > 0) return 'Non-Compliant';
+    if (cisRecord.passed_instances > 0) return 'Compliant';
+    if (cisRecord.skipped_instances > 0) return 'Skipped';
+    return 'Not Available';
   };
 
   const determineStatus = (cisRecord) => {
