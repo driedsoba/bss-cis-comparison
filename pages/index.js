@@ -103,7 +103,8 @@ const BSSCISAnalyzer = () => {
     data.forEach(row => {
       // Detect ID format patterns
       if (row.BSS_ID) {
-        const format = row.BSS_ID.replace(/\d+/g, 'N');
+        const idStr = String(row.BSS_ID);
+        const format = idStr.replace(/\d+/g, 'N');
         patterns.idFormats.set(format, (patterns.idFormats.get(format) || 0) + 1);
       }
 
