@@ -196,7 +196,7 @@ export default function BSSCISAnalyzer() {
           </table>
         </div>
         <button className="primary export" onClick={xport}>Export to Excel</button>
-      </>)}}
+      </>)}
     </div>
   );
 }
